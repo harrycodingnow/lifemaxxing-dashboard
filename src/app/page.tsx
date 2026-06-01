@@ -437,13 +437,31 @@ export default function Home() {
           </div>
           <div className="mt-1.5 flex-1 overflow-y-auto pr-1 space-y-1 min-h-0">
             {(nutrition?.meals ?? []).map((m) => (
-              <div key={m.id} className="flex items-center justify-between text-[13px] border-b border-zinc-800/60 py-0.5">
+              <div key={m.id} className="group flex items-center justify-between text-[13px] border-b border-zinc-800/60 py-0.5">
                 <div className="min-w-0 flex-1 truncate">
                   <span className="text-[11px] uppercase text-zinc-500 mr-1">{m.meal_type || "meal"}</span>
                   <span className="text-zinc-200">{m.description}</span>
                 </div>
                 <div className="text-zinc-400 tabular-nums whitespace-nowrap ml-2">
                   {Math.round(m.calories)} kcal · P{Math.round(m.protein_g)} C{Math.round(m.carbs_g)} F{Math.round(m.fat_g)}
+                </div>
+                <div className="ml-2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition">
+                  <button
+                    onClick={() => setEditing("meals")}
+                    title="Edit meal"
+                    className="text-[11px] px-1 py-0.5 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"
+                  >✎</button>
+                  <button
+                    onClick={async () => {
+                      if (!confirm(`Delete this meal?\n\n${m.description}`)) return;
+                      const r = await fetch(`/api/meals/${m.id}`, { method: "DELETE" });
+                      if (!r.ok) { setToast("Delete failed."); return; }
+                      setToast("Meal deleted.");
+                      await refreshAll();
+                    }}
+                    title="Delete meal"
+                    className="text-[11px] px-1 py-0.5 rounded text-zinc-400 hover:text-rose-300 hover:bg-zinc-800"
+                  >✕</button>
                 </div>
               </div>
             ))}
