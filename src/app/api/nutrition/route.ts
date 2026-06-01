@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import db from "@/lib/db";
+import { readGoals } from "../goals/route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,13 +44,8 @@ export async function GET(req: NextRequest) {
     { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 },
   );
 
-  // Default goals (will be configurable later)
-  const goals = {
-    calories: Number(process.env.GOAL_CALORIES || 2200),
-    protein_g: Number(process.env.GOAL_PROTEIN || 160),
-    carbs_g: Number(process.env.GOAL_CARBS || 240),
-    fat_g: Number(process.env.GOAL_FAT || 70),
-  };
+  // User-configurable goals (settings table, overridable via env defaults)
+  const goals = readGoals();
 
   return NextResponse.json({
     day: new Date(dayStart).toISOString().slice(0, 10),

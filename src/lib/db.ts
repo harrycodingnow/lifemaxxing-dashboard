@@ -56,6 +56,11 @@ CREATE TABLE IF NOT EXISTS chat_log (
   text TEXT NOT NULL,
   meta_json TEXT
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 `);
 
 export default db;

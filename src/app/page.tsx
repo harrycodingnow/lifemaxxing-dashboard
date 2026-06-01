@@ -99,6 +99,14 @@ export default function Home() {
   const [weight, setWeight] = useState<Weight | null>(null);
   const [weightRange, setWeightRange] = useState(90);
   const [toast, setToast] = useState<string | null>(null);
+  const [editGoals, setEditGoals] = useState(false);
+  const [goalsDraft, setGoalsDraft] = useState<{ calories: string; protein_g: string; carbs_g: string; fat_g: string }>({
+    calories: "",
+    protein_g: "",
+    carbs_g: "",
+    fat_g: "",
+  });
+  const [savingGoals, setSavingGoals] = useState(false);
   const [dca, setDca] = useState<{
     job: { name: string; schedule: string; action: string; source: string; target: string; amountPerRun: number };
     runs: number;
@@ -370,7 +378,25 @@ export default function Home() {
         <section className="col-span-6 row-span-2 rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-2 flex flex-col min-h-0">
           <div className="flex items-baseline justify-between mb-1.5 shrink-0">
             <h2 className="text-base font-medium text-zinc-200">Nutrition · {nutrition?.day ?? "today"}</h2>
-            <span className="text-[12px] text-zinc-500">{nutrition?.meals.length ?? 0} meals</span>
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] text-zinc-500">{nutrition?.meals.length ?? 0} meals</span>
+              <button
+                onClick={() => {
+                  const g = nutrition?.goals;
+                  setGoalsDraft({
+                    calories: g ? String(g.calories) : "",
+                    protein_g: g ? String(g.protein_g) : "",
+                    carbs_g: g ? String(g.carbs_g) : "",
+                    fat_g: g ? String(g.fat_g) : "",
+                  });
+                  setEditGoals(true);
+                }}
+                className="text-[12px] text-zinc-500 hover:text-zinc-200 px-1.5 py-0.5 rounded border border-zinc-800 hover:border-zinc-600"
+                title="Edit daily goals"
+              >
+                ⚙ goals
+              </button>
+            </div>
           </div>
           <div className="grid grid-cols-4 gap-1.5 shrink-0">
             {(["calories", "protein_g", "carbs_g", "fat_g"] as const).map((k) => {
@@ -579,6 +605,75 @@ export default function Home() {
                 className="rounded-lg bg-emerald-600 px-4 py-2 text-lg font-medium hover:bg-emerald-500 disabled:opacity-40"
               >
                 {committing ? "Saving…" : "Confirm & Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit goals modal */}
+      {editGoals && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
+            <div className="mb-3 flex items-baseline justify-between">
+              <h3 className="text-lg font-semibold">Daily nutrition goals</h3>
+              <span className="text-[11px] uppercase tracking-wider text-zinc-500">per day</span>
+            </div>
+            <div className="space-y-2">
+              {([
+                ["calories", "Calories (kcal)"],
+                ["protein_g", "Protein (g)"],
+                ["carbs_g", "Carbs (g)"],
+                ["fat_g", "Fat (g)"],
+              ] as const).map(([k, label]) => (
+                <label key={k} className="flex items-center justify-between gap-3">
+                  <span className="text-sm text-zinc-400">{label}</span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    value={goalsDraft[k]}
+                    onChange={(e) => setGoalsDraft((d) => ({ ...d, [k]: e.target.value }))}
+                    placeholder={String(nutrition?.goals[k] ?? "")}
+                    className="w-32 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-right text-base tabular-nums outline-none focus:border-zinc-500"
+                  />
+                </label>
+              ))}
+            </div>
+            <div className="mt-5 flex gap-2 justify-end">
+              <button
+                onClick={() => setEditGoals(false)}
+                disabled={savingGoals}
+                className="rounded-lg border border-zinc-700 px-4 py-2 text-base hover:bg-zinc-800 disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  setSavingGoals(true);
+                  const payload: Record<string, number> = {};
+                  for (const k of ["calories", "protein_g", "carbs_g", "fat_g"] as const) {
+                    const n = Number(goalsDraft[k]);
+                    if (Number.isFinite(n) && n > 0) payload[k] = n;
+                  }
+                  try {
+                    await fetch("/api/goals", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ goals: payload }),
+                    });
+                    await refreshAll();
+                    setToast("Goals updated.");
+                    setEditGoals(false);
+                  } catch {
+                    setToast("Failed to save goals.");
+                  } finally {
+                    setSavingGoals(false);
+                  }
+                }}
+                disabled={savingGoals}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-base font-medium hover:bg-emerald-500 disabled:opacity-40"
+              >
+                {savingGoals ? "Saving…" : "Save"}
               </button>
             </div>
           </div>
