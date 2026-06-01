@@ -11,6 +11,7 @@ import {
   ResponsiveContainer,
   ReferenceLine,
 } from "recharts";
+import FlipNumber from "@/components/FlipNumber";
 
 type Position = {
   asset_type: string;
@@ -275,10 +276,10 @@ export default function Home() {
           <div className="shrink-0">
             <div className="text-[11px] uppercase tracking-wider text-zinc-500">Portfolio</div>
             <div className="text-3xl font-semibold leading-tight">
-              {fmtMoney(totalsToDisplay(portfolio?.totals.market_value_usd), displayCcy)}
+              <FlipNumber value={fmtMoney(totalsToDisplay(portfolio?.totals.market_value_usd), displayCcy)} />
             </div>
             <div className={`text-[13px] leading-tight ${colorPnl(portfolio?.totals.pnl_usd)}`}>
-              {fmtMoney(totalsToDisplay(portfolio?.totals.pnl_usd), displayCcy)} ({fmtPct(portfolio?.totals.pnl_pct)})
+              <FlipNumber value={`${fmtMoney(totalsToDisplay(portfolio?.totals.pnl_usd), displayCcy)} (${fmtPct(portfolio?.totals.pnl_pct)})`} />
             </div>
           </div>
           <div className="flex-1 grid grid-cols-4 gap-2">
@@ -302,8 +303,8 @@ export default function Home() {
                     <span>{g.label}</span>
                     <span>{rows.length} pos</span>
                   </div>
-                  <div className="text-lg font-semibold tabular-nums">{fmtMoney(mv || null, displayCcy)}</div>
-                  <div className={`text-[12px] ${colorPnl(today)}`}>{today != null ? `${fmtPct(today)} today` : "—"}</div>
+                  <div className="text-lg font-semibold tabular-nums"><FlipNumber value={fmtMoney(mv || null, displayCcy)} /></div>
+                  <div className={`text-[12px] ${colorPnl(today)}`}>{today != null ? <><FlipNumber value={fmtPct(today)} /> today</> : "—"}</div>
                 </div>
               );
             })}
@@ -358,8 +359,8 @@ export default function Home() {
                       <div className="truncate text-[12px] text-zinc-500">{p.display_name}</div>
                     </div>
                     <div className="text-right whitespace-nowrap tabular-nums">
-                      <div className="text-zinc-100">{fmtMoneyFull(p.current_price, p.currency)}</div>
-                      <div className={`text-[12px] ${colorPnl(p.change_pct_today)}`}>{fmtPct(p.change_pct_today)}</div>
+                      <div className="text-zinc-100"><FlipNumber value={fmtMoneyFull(p.current_price, p.currency)} /></div>
+                      <div className={`text-[12px] ${colorPnl(p.change_pct_today)}`}><FlipNumber value={fmtPct(p.change_pct_today)} /></div>
                     </div>
                   </div>
                 ))}
