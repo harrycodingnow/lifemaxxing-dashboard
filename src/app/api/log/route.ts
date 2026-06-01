@@ -3,6 +3,9 @@ import db from "@/lib/db";
 import { hermesCall, extractJson } from "@/lib/hermes";
 import { ROUTER_PROMPT, TRADE_PARSE_PROMPT, MEAL_RESEARCH_PROMPT, WEIGHT_PARSE_PROMPT, BATCH_PARSE_PROMPT } from "@/lib/prompts";
 
+// SECURITY: this endpoint shells out to the local `hermes` CLI with --yolo --ignore-rules,
+// granting full tool access on the host machine. NEVER expose this dashboard to a public
+// network — bind to 127.0.0.1 only. Hermes calls trust the caller completely.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 

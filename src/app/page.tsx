@@ -10,6 +10,9 @@ import {
   Tooltip,
   ResponsiveContainer,
   ReferenceLine,
+  PieChart,
+  Pie,
+  Cell,
 } from "recharts";
 import FlipNumber from "@/components/FlipNumber";
 import EditModal, { type FieldDef } from "@/components/EditModal";
@@ -134,6 +137,16 @@ export default function Home() {
   const [committing, setCommitting] = useState(false);
   const [displayCcy, setDisplayCcy] = useState<"TWD" | "USD">("TWD");
 
+  type Stats = {
+    cashflow: { buys_usd: number; sells_usd: number; net_usd: number; trade_count: number; fx_used: number };
+    streaks: { meal_log: number; protein_goal: number; protein_hit_last_7: number; dca: number; weigh_in: number };
+    window_days: number;
+  };
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [cashWindow, setCashWindow] = useState(1);
+  type LastEntry = { kind: "trade" | "meal" | "weight"; id: number; label: string };
+  const [lastEntry, setLastEntry] = useState<LastEntry | null>(null);
+
   useEffect(() => {
     const saved = typeof window !== "undefined" ? window.localStorage.getItem("displayCcy") : null;
     if (saved === "USD" || saved === "TWD") setDisplayCcy(saved);
@@ -143,17 +156,20 @@ export default function Home() {
   }, [displayCcy]);
 
   const refreshAll = useCallback(async () => {
-    const [p, n, w, d] = await Promise.all([
+    const tz = new Date().getTimezoneOffset(); // minutes east of UTC, negated
+    const [p, n, w, d, s] = await Promise.all([
       fetch("/api/portfolio").then((r) => r.json()),
       fetch("/api/nutrition").then((r) => r.json()),
       fetch(`/api/weights?days=${weightRange}`).then((r) => r.json()),
       fetch("/api/recurring").then((r) => r.json()).catch(() => null),
+      fetch(`/api/stats?window=${cashWindow}&tz=${tz}`).then((r) => r.json()).catch(() => null),
     ]);
     setPortfolio(p);
     setNutrition(n);
     setWeight(w);
     setDca(d);
-  }, [weightRange]);
+    setStats(s);
+  }, [weightRange, cashWindow]);
 
   useEffect(() => {
     refreshAll();
@@ -165,9 +181,10 @@ export default function Home() {
 
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(null), 3000);
+    const ms = toast === "Saved" && lastEntry ? 10000 : 3000;
+    const t = setTimeout(() => setToast(null), ms);
     return () => clearTimeout(t);
-  }, [toast]);
+  }, [toast, lastEntry]);
 
   async function send() {
     const t = text.trim();
@@ -209,6 +226,20 @@ export default function Home() {
       if (!r.ok) {
         setToast(`Commit failed: ${j.error || r.statusText}`);
       } else {
+        // Track for undo. Batch entries get the most recent id only.
+        if (j.kind === "batch" && Array.isArray(j.results)) {
+          const ok = j.results.filter((x: { ok: boolean; id?: number; kind: string }) => x.ok && x.id);
+          if (ok.length > 0) {
+            const last = ok[ok.length - 1];
+            setLastEntry({ kind: last.kind, id: last.id, label: `${ok.length} entries` });
+          }
+        } else if (j.id && (j.kind === "trade" || j.kind === "meal" || j.kind === "weight")) {
+          let label = j.kind as string;
+          if (pending.kind === "trade") label = `${pending.payload.side} ${pending.payload.symbol}`;
+          else if (pending.kind === "meal") label = `${pending.payload.meal_type || "meal"}`;
+          else if (pending.kind === "weight") label = `${pending.payload.weight_kg}kg`;
+          setLastEntry({ kind: j.kind, id: j.id, label });
+        }
         setToast("Saved");
       }
       setPending(null);
@@ -218,6 +249,16 @@ export default function Home() {
     } finally {
       setCommitting(false);
     }
+  }
+
+  async function undoLast() {
+    if (!lastEntry) return;
+    const table = lastEntry.kind === "trade" ? "trades" : lastEntry.kind === "meal" ? "meals" : "weights";
+    const r = await fetch(`/api/${table}/${lastEntry.id}`, { method: "DELETE" });
+    if (!r.ok) { setToast("Undo failed."); return; }
+    setLastEntry(null);
+    setToast("Undone.");
+    await refreshAll();
   }
 
   function cancelPending() {
@@ -272,7 +313,7 @@ export default function Home() {
       </header>
 
       {/* Main grid — fits viewport */}
-      <main className="flex-1 grid grid-cols-12 grid-rows-6 gap-2 p-2 overflow-hidden min-h-0">
+      <main className="flex-1 grid grid-cols-12 grid-rows-7 gap-2 p-2 overflow-hidden min-h-0">
         {/* Portfolio header (total + per-class KPIs) */}
         <section className="col-span-12 row-span-1 rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-2 flex items-center justify-between gap-4 min-h-0">
           <div className="shrink-0">
@@ -381,14 +422,21 @@ export default function Home() {
                   <div className="text-[13px] text-zinc-500 py-2">No positions</div>
                 )}
                 {rows.map((p) => (
-                  <div key={`${p.asset_type}|${p.symbol}`} className="flex items-center justify-between text-[13px]">
+                  <div key={`${p.asset_type}|${p.symbol}`} className="group flex items-center justify-between text-[13px]">
                     <div className="min-w-0">
                       <div className="truncate font-medium text-zinc-100">{p.symbol.replace(/\.TW$/, "")}</div>
                       <div className="truncate text-[12px] text-zinc-500">{p.display_name}</div>
                     </div>
-                    <div className="text-right whitespace-nowrap tabular-nums">
-                      <div className="text-zinc-100"><FlipNumber value={fmtMoneyFull(p.current_price, p.currency)} /></div>
-                      <div className={`text-[12px] ${colorPnl(p.change_pct_today)}`}><FlipNumber value={fmtPct(p.change_pct_today)} /></div>
+                    <div className="flex items-center gap-1">
+                      <div className="text-right whitespace-nowrap tabular-nums">
+                        <div className="text-zinc-100"><FlipNumber value={fmtMoneyFull(p.current_price, p.currency)} /></div>
+                        <div className={`text-[12px] ${colorPnl(p.change_pct_today)}`}><FlipNumber value={fmtPct(p.change_pct_today)} /></div>
+                      </div>
+                      <button
+                        onClick={() => setEditing("trades")}
+                        title={`Edit ${p.symbol} trades`}
+                        className="opacity-0 group-hover:opacity-100 transition text-[11px] px-1 py-0.5 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"
+                      >✎</button>
                     </div>
                   </div>
                 ))}
@@ -533,6 +581,7 @@ export default function Home() {
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart
                   data={(weight?.rows ?? []).map((r, i) => ({
+                    id: r.id,
                     ts: r.ts,
                     date: new Date(r.ts).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
                     kg: r.weight_kg,
@@ -551,13 +600,138 @@ export default function Home() {
                   {weight?.stats.latest_kg != null && (
                     <ReferenceLine y={weight.stats.latest_kg} stroke="#3f3f46" strokeDasharray="4 4" />
                   )}
-                  <Line type="monotone" dataKey="kg" stroke="#60a5fa" strokeWidth={1.5} dot={{ r: 2 }} />
+                  <Line
+                    type="monotone"
+                    dataKey="kg"
+                    stroke="#60a5fa"
+                    strokeWidth={1.5}
+                    dot={(props: { cx?: number; cy?: number; payload?: { id?: number; kg?: number; date?: string } }) => {
+                      const { cx, cy, payload } = props;
+                      if (cx == null || cy == null || !payload) return <g />;
+                      return (
+                        <circle
+                          cx={cx}
+                          cy={cy}
+                          r={3}
+                          fill="#60a5fa"
+                          stroke="#0a0a0a"
+                          strokeWidth={1}
+                          style={{ cursor: "pointer" }}
+                          onClick={async () => {
+                            if (!payload.id) return;
+                            if (!confirm(`Delete weigh-in?\n\n${payload.date}: ${payload.kg} kg`)) return;
+                            const r = await fetch(`/api/weights/${payload.id}`, { method: "DELETE" });
+                            if (!r.ok) { setToast("Delete failed."); return; }
+                            setToast("Weigh-in deleted.");
+                            await refreshAll();
+                          }}
+                        />
+                      );
+                    }}
+                  />
                   <Line type="monotone" dataKey="ma" stroke="#34d399" strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
             )}
           </div>
         </section>
+        {/* Insights row: cash-in · streaks · allocation */}
+        <section className="col-span-4 row-span-1 rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-2 flex flex-col justify-between min-h-0">
+          <div className="flex items-center justify-between">
+            <div className="text-[11px] uppercase tracking-wider text-zinc-500">Net cash-in</div>
+            <div className="inline-flex rounded-md border border-zinc-700 overflow-hidden text-[10px]">
+              {([
+                { d: 1, label: "1D" },
+                { d: 7, label: "7D" },
+                { d: 30, label: "30D" },
+              ] as const).map((o) => (
+                <button
+                  key={o.d}
+                  onClick={() => setCashWindow(o.d)}
+                  className={`px-1.5 py-0.5 ${cashWindow === o.d ? "bg-zinc-700 text-zinc-100" : "text-zinc-400 hover:bg-zinc-800"}`}
+                >{o.label}</button>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-baseline justify-between">
+            <div className={`text-2xl font-semibold tabular-nums ${stats && stats.cashflow.net_usd >= 0 ? "text-zinc-100" : "text-rose-300"}`}>
+              <FlipNumber value={stats ? fmtMoney(totalsToDisplay(stats.cashflow.net_usd), displayCcy) : "—"} />
+            </div>
+            <div className="text-[11px] text-zinc-500 text-right leading-tight">
+              <div>{stats ? `${stats.cashflow.trade_count} trades` : "—"}</div>
+              <div className="text-emerald-400">+{stats ? fmtMoney(totalsToDisplay(stats.cashflow.buys_usd), displayCcy) : "—"}</div>
+              <div className="text-rose-400">−{stats ? fmtMoney(totalsToDisplay(stats.cashflow.sells_usd), displayCcy) : "—"}</div>
+            </div>
+          </div>
+        </section>
+
+        <section className="col-span-4 row-span-1 rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-2 flex flex-col justify-between min-h-0">
+          <div className="text-[11px] uppercase tracking-wider text-zinc-500">Streaks</div>
+          <div className="grid grid-cols-4 gap-2 text-center">
+            {[
+              { k: "meal_log", label: "Meals", emoji: "🍽" },
+              { k: "protein_goal", label: "Protein", emoji: "💪" },
+              { k: "weigh_in", label: "Weigh", emoji: "⚖️" },
+              { k: "dca", label: "DCA", emoji: "₿" },
+            ].map((s) => {
+              const v = stats?.streaks ? (stats.streaks as Record<string, number>)[s.k] ?? 0 : 0;
+              return (
+                <div key={s.k} className="flex flex-col items-center">
+                  <div className="text-[10px] text-zinc-500">{s.emoji} {s.label}</div>
+                  <div className={`text-lg font-semibold tabular-nums ${v > 0 ? "text-amber-300" : "text-zinc-500"}`}>
+                    {v}<span className="text-[10px] text-zinc-500">d</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="col-span-4 row-span-1 rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-2 flex items-center gap-3 min-h-0">
+          <div className="text-[11px] uppercase tracking-wider text-zinc-500 shrink-0">Allocation</div>
+          <div className="flex-1 h-full min-h-0">
+            {(() => {
+              const buckets = [
+                { key: "tw_stock", label: "TW", color: "#10b981" },
+                { key: "us_stock", label: "US", color: "#3b82f6" },
+                { key: "crypto", label: "Crypto", color: "#f59e0b" },
+              ];
+              const data = buckets.map((b) => {
+                const v = (portfolio?.positions ?? [])
+                  .filter((p) => p.asset_type === b.key)
+                  .reduce((s, p) => s + (p.market_value_usd ?? 0), 0);
+                return { name: b.label, value: v, color: b.color };
+              }).filter((d) => d.value > 0);
+              const total = data.reduce((s, d) => s + d.value, 0);
+              if (total <= 0) return <div className="h-full flex items-center justify-center text-[12px] text-zinc-500">No positions</div>;
+              return (
+                <div className="h-full flex items-center gap-2">
+                  <div className="h-full aspect-square">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie data={data} dataKey="value" innerRadius="60%" outerRadius="100%" stroke="none">
+                          {data.map((d, i) => <Cell key={i} fill={d.color} />)}
+                        </Pie>
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="flex-1 space-y-0.5 text-[11px]">
+                    {data.map((d) => (
+                      <div key={d.name} className="flex items-center justify-between">
+                        <span className="flex items-center gap-1 text-zinc-400">
+                          <span className="inline-block w-2 h-2 rounded-sm" style={{ background: d.color }} />
+                          {d.name}
+                        </span>
+                        <span className="tabular-nums text-zinc-200">{((d.value / total) * 100).toFixed(0)}%</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </section>
+
         {/* Input row */}
         <section className="col-span-12 row-span-1 flex items-center justify-center min-h-0">
           <div className="w-full max-w-2xl rounded-full border border-zinc-700/80 bg-zinc-900/70 backdrop-blur pl-5 pr-1.5 py-1.5 flex items-center gap-2 shadow-lg shadow-black/30 focus-within:border-zinc-500 focus-within:bg-zinc-900/90 transition-colors">
@@ -588,8 +762,17 @@ export default function Home() {
 
       {/* Toast */}
       {toast && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 rounded-full border border-zinc-700 bg-zinc-900/95 backdrop-blur px-4 py-1.5 text-base text-zinc-200 shadow-xl">
-          {toast}
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 rounded-full border border-zinc-700 bg-zinc-900/95 backdrop-blur px-4 py-1.5 text-base text-zinc-200 shadow-xl flex items-center gap-3">
+          <span>{toast}</span>
+          {toast === "Saved" && lastEntry && (
+            <button
+              onClick={undoLast}
+              className="text-[12px] uppercase tracking-wider text-amber-400 hover:text-amber-300 border-l border-zinc-700 pl-3"
+              title={`Undo: ${lastEntry.label}`}
+            >
+              ↶ Undo
+            </button>
+          )}
         </div>
       )}
 

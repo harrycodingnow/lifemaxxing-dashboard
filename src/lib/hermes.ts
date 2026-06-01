@@ -7,7 +7,10 @@ import { spawn } from "child_process";
  */
 export async function hermesCall(prompt: string, opts: { timeoutMs?: number } = {}): Promise<string> {
   const timeoutMs = opts.timeoutMs ?? 90_000;
-  const bin = process.env.HERMES_BIN || "/Users/harryhou/.local/bin/hermes";
+  // Default path is Harry's local install. Override with env HERMES_BIN.
+// If you clone this repo: install Hermes (`pip install hermes-agent` or local) and
+// either symlink `hermes` into $PATH or set HERMES_BIN to the absolute binary path.
+const bin = process.env.HERMES_BIN || "/Users/harryhou/.local/bin/hermes";
   return new Promise((resolve, reject) => {
     const child = spawn(bin, ["-z", prompt, "--yolo", "--ignore-rules"], {
       env: { ...process.env },
