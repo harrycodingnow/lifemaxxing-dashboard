@@ -1,36 +1,47 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Lifemaxxing Dashboard
 
-## Getting Started
+Personal all-in-one dashboard for tracking investments (TW stocks, US stocks, crypto) and daily nutrition + body weight — all from a single natural-language chat input parsed by a local Hermes Agent.
 
-First, run the development server:
+Instead of forms, just type:
+
+- `bought 2 shares TSMC at NT$945`
+- `lunch: 100g chicken breast, one bowl of rice`
+- `weight 77.4kg`
+- `bought 0.1 ETH at $3200 and breakfast: 3 eggs and oatmeal` (batch)
+
+Hermes routes the intent, looks up tickers / nutrition data, and shows a confirm modal before writing.
+
+## Stack
+
+- Next.js 14 (App Router) + TypeScript + Tailwind
+- SQLite via `better-sqlite3` (`data/lifemaxx.db`)
+- Local Hermes CLI invoked from API routes (`hermes -z "..." --yolo`)
+- Recharts for the weight chart
+- DCA cron via Hermes cronjob → script at `~/.hermes/scripts/lifemaxx_dca_usdc_btc.sh`
+
+## Run
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Opens at <http://localhost:3000>. Requires `hermes` CLI on PATH.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Layout
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Single-viewport, no scroll:
 
-## Learn More
+- Row 1: Portfolio totals + TW / US / Crypto / DCA KPIs
+- Row 2: TW Stocks · US Stocks · Crypto holdings
+- Row 3: Nutrition (kcal / P / C / F vs goals) · Weight chart
+- Row 4: Pill input bar
 
-To learn more about Next.js, take a look at the following resources:
+## API
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `POST /api/log` — parse a message (returns `{kind, payload, needsConfirm}`)
+- `POST /api/log/commit` — write the parsed entry (handles single + batch)
+- `GET  /api/portfolio` — positions with live prices
+- `GET  /api/nutrition` — today's meals + totals
+- `GET  /api/weights?days=N` — weigh-ins + 7d moving avg
+- `GET  /api/recurring` — DCA job summary
