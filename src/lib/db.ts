@@ -63,4 +63,16 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 `);
 
+// Idempotent migration: add deleted_at to trades/meals/weights if missing.
+// SQLite has no IF NOT EXISTS for ADD COLUMN, so we introspect pragma.
+function ensureColumn(table: string, column: string, decl: string) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!cols.find((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
+  }
+}
+ensureColumn("trades", "deleted_at", "INTEGER");
+ensureColumn("meals", "deleted_at", "INTEGER");
+ensureColumn("weights", "deleted_at", "INTEGER");
+
 export default db;

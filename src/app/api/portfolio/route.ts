@@ -19,7 +19,7 @@ type TradeRow = {
 };
 
 export async function GET() {
-  const trades = db.prepare("SELECT * FROM trades ORDER BY ts ASC").all() as TradeRow[];
+  const trades = db.prepare("SELECT * FROM trades WHERE deleted_at IS NULL ORDER BY ts ASC").all() as TradeRow[];
 
   // Aggregate per symbol
   type Pos = {

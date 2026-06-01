@@ -23,7 +23,7 @@ export async function GET() {
     .prepare(
       `SELECT id, ts, asset_type, symbol, side, quantity, price, currency, note
        FROM trades
-       WHERE note LIKE '%daily DCA%'
+       WHERE note LIKE '%daily DCA%' AND deleted_at IS NULL
        ORDER BY ts ASC`,
     )
     .all() as TradeRow[];

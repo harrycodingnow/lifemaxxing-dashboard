@@ -12,6 +12,7 @@ import {
   ReferenceLine,
 } from "recharts";
 import FlipNumber from "@/components/FlipNumber";
+import EditModal, { type FieldDef } from "@/components/EditModal";
 
 type Position = {
   asset_type: string;
@@ -101,6 +102,7 @@ export default function Home() {
   const [weightRange, setWeightRange] = useState(90);
   const [toast, setToast] = useState<string | null>(null);
   const [editGoals, setEditGoals] = useState(false);
+  const [editing, setEditing] = useState<null | "trades" | "meals" | "weights">(null);
   const [goalsDraft, setGoalsDraft] = useState<{ calories: string; protein_g: string; carbs_g: string; fat_g: string }>({
     calories: "",
     protein_g: "",
@@ -346,7 +348,14 @@ export default function Home() {
             >
               <div className="flex items-center justify-between mb-1.5 shrink-0">
                 <h3 className="text-base font-medium text-zinc-200">{g.label === "TW" ? "TW Stocks" : g.label === "US" ? "US Stocks" : "Crypto"}</h3>
-                <span className={`rounded-full px-2 py-0.5 text-[11px] ${g.pillTone}`}>{g.pill}</span>
+                <div className="flex items-center gap-1.5">
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] ${g.pillTone}`}>{g.pill}</span>
+                  <button
+                    onClick={() => setEditing("trades")}
+                    className="text-[11px] text-zinc-500 hover:text-zinc-200 px-1.5 py-0.5 rounded border border-zinc-800 hover:border-zinc-600"
+                    title="Edit trades"
+                  >✎</button>
+                </div>
               </div>
               <div className="flex-1 overflow-y-auto pr-1 space-y-1.5 min-h-0">
                 {rows.length === 0 && (
@@ -381,6 +390,13 @@ export default function Home() {
             <h2 className="text-base font-medium text-zinc-200">Nutrition · {nutrition?.day ?? "today"}</h2>
             <div className="flex items-center gap-2">
               <span className="text-[12px] text-zinc-500">{nutrition?.meals.length ?? 0} meals</span>
+              <button
+                onClick={() => setEditing("meals")}
+                className="text-[12px] text-zinc-500 hover:text-zinc-200 px-1.5 py-0.5 rounded border border-zinc-800 hover:border-zinc-600"
+                title="Edit meals"
+              >
+                ✎ meals
+              </button>
               <button
                 onClick={() => {
                   const g = nutrition?.goals;
@@ -440,7 +456,14 @@ export default function Home() {
         {/* Weight */}
         <section className="col-span-6 row-span-2 rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-2 flex flex-col min-h-0">
           <div className="flex items-center justify-between mb-1 shrink-0">
-            <h2 className="text-base font-medium text-zinc-200">Weight</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-medium text-zinc-200">Weight</h2>
+              <button
+                onClick={() => setEditing("weights")}
+                className="text-[11px] text-zinc-500 hover:text-zinc-200 px-1.5 py-0.5 rounded border border-zinc-800 hover:border-zinc-600"
+                title="Edit weigh-ins"
+              >✎</button>
+            </div>
             <div className="flex items-center gap-2">
               <div className="text-right">
                 <div className="text-lg font-semibold leading-tight tabular-nums">
@@ -499,27 +522,30 @@ export default function Home() {
           </div>
         </section>
         {/* Input row */}
-        <section className="col-span-12 row-span-1 rounded-full border border-zinc-700 bg-zinc-900/60 pl-5 pr-2 py-2 flex items-center gap-2 min-h-0">
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                send();
-              }
-            }}
-            placeholder={busy ? "Hermes is thinking…" : "Log a trade, meal, weight, or multiple at once…"}
-            className="flex-1 bg-transparent text-lg outline-none placeholder:text-zinc-500"
-            disabled={busy}
-          />
-          <button
-            onClick={send}
-            disabled={busy || !text.trim()}
-            className="rounded-full bg-blue-600 px-4 py-1.5 text-base font-medium hover:bg-blue-500 disabled:opacity-40"
-          >
-            {busy ? "…" : "Send"}
-          </button>
+        <section className="col-span-12 row-span-1 flex items-center justify-center min-h-0">
+          <div className="w-full max-w-2xl rounded-full border border-zinc-700/80 bg-zinc-900/70 backdrop-blur pl-5 pr-1.5 py-1.5 flex items-center gap-2 shadow-lg shadow-black/30 focus-within:border-zinc-500 focus-within:bg-zinc-900/90 transition-colors">
+            <span className="text-zinc-600 text-sm select-none">›</span>
+            <input
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+              placeholder={busy ? "Hermes is thinking…" : "Log a trade, meal, or weight…"}
+              className="flex-1 bg-transparent text-base outline-none placeholder:text-zinc-500"
+              disabled={busy}
+            />
+            <button
+              onClick={send}
+              disabled={busy || !text.trim()}
+              className="rounded-full bg-blue-600 px-4 py-1.5 text-sm font-medium hover:bg-blue-500 disabled:opacity-30 disabled:hover:bg-blue-600 transition-colors"
+            >
+              {busy ? "…" : "Send"}
+            </button>
+          </div>
         </section>
       </main>
 
@@ -680,6 +706,59 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      <EditModal
+        open={editing === "trades"}
+        onClose={() => setEditing(null)}
+        title="Edit trades"
+        resource="trades"
+        fields={[
+          { key: "ts", label: "When", type: "datetime", width: "w-44" },
+          { key: "side", label: "Side", type: "select", options: [{ value: "buy", label: "buy" }, { value: "sell", label: "sell" }], width: "w-20" },
+          { key: "asset_type", label: "Type", type: "select", options: [{ value: "tw_stock", label: "tw" }, { value: "us_stock", label: "us" }, { value: "crypto", label: "crypto" }], width: "w-24" },
+          { key: "symbol", label: "Symbol", type: "text", width: "w-28" },
+          { key: "display_name", label: "Name", type: "text" },
+          { key: "quantity", label: "Qty", type: "number", step: "any", width: "w-24" },
+          { key: "price", label: "Price", type: "number", step: "any", width: "w-28" },
+          { key: "currency", label: "Ccy", type: "text", width: "w-16" },
+          { key: "note", label: "Note", type: "text" },
+        ]}
+        onChanged={refreshAll}
+      />
+
+      <EditModal
+        open={editing === "meals"}
+        onClose={() => setEditing(null)}
+        title="Edit meals (last 30d)"
+        resource="meals"
+        fetchUrl="/api/meals?days=30"
+        fields={[
+          { key: "ts", label: "When", type: "datetime", width: "w-44" },
+          { key: "meal_type", label: "Meal", type: "select", options: [
+            { value: "breakfast", label: "breakfast" }, { value: "lunch", label: "lunch" }, { value: "dinner", label: "dinner" }, { value: "snack", label: "snack" }, { value: "", label: "—" },
+          ], width: "w-28" },
+          { key: "description", label: "Description", type: "text" },
+          { key: "calories", label: "kcal", type: "number", step: "1", width: "w-20" },
+          { key: "protein_g", label: "P", type: "number", step: "0.1", width: "w-16" },
+          { key: "carbs_g", label: "C", type: "number", step: "0.1", width: "w-16" },
+          { key: "fat_g", label: "F", type: "number", step: "0.1", width: "w-16" },
+        ]}
+        onChanged={refreshAll}
+      />
+
+      <EditModal
+        open={editing === "weights"}
+        onClose={() => setEditing(null)}
+        title="Edit weigh-ins"
+        resource="weights"
+        fetchUrl={`/api/weights?days=${weightRange}`}
+        fields={[
+          { key: "ts", label: "When", type: "datetime", width: "w-44" },
+          { key: "weight_kg", label: "kg", type: "number", step: "0.1", width: "w-24" },
+          { key: "note", label: "Note", type: "text" },
+        ]}
+        onChanged={refreshAll}
+      />
     </div>
   );
 }

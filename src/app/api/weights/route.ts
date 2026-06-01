@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
   const sinceTs = Date.now() - range_days * 86400_000;
 
   const rows = db
-    .prepare("SELECT id, ts, weight_kg, note FROM weights WHERE ts >= ? ORDER BY ts ASC")
+    .prepare("SELECT id, ts, weight_kg, note FROM weights WHERE ts >= ? AND deleted_at IS NULL ORDER BY ts ASC")
     .all(sinceTs) as Array<{ id: number; ts: number; weight_kg: number; note: string | null }>;
 
   // 7-day moving average across all rows in window

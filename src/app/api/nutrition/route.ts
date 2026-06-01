@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
   const dayEnd = dayStart + 24 * 3600 * 1000;
 
   const meals = db
-    .prepare("SELECT * FROM meals WHERE ts >= ? AND ts < ? ORDER BY ts ASC")
+    .prepare("SELECT * FROM meals WHERE ts >= ? AND ts < ? AND deleted_at IS NULL ORDER BY ts ASC")
     .all(dayStart, dayEnd) as MealRow[];
 
   const totals = meals.reduce(
