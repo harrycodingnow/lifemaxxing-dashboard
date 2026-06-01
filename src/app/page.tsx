@@ -280,9 +280,28 @@ export default function Home() {
             <div className="text-3xl font-semibold leading-tight">
               <FlipNumber value={fmtMoney(totalsToDisplay(portfolio?.totals.market_value_usd), displayCcy)} />
             </div>
-            <div className={`text-[13px] leading-tight ${colorPnl(portfolio?.totals.pnl_usd)}`}>
-              <FlipNumber value={`${fmtMoney(totalsToDisplay(portfolio?.totals.pnl_usd), displayCcy)} (${fmtPct(portfolio?.totals.pnl_pct)})`} />
-            </div>
+            {(() => {
+              let todayPctNum = 0;
+              let todayPctDen = 0;
+              let todayUsd = 0;
+              let haveAny = false;
+              for (const p of portfolio?.positions ?? []) {
+                if (p.change_pct_today != null && p.market_value_usd != null) {
+                  todayPctNum += p.change_pct_today * p.market_value_usd;
+                  todayPctDen += p.market_value_usd;
+                  // today's $ contribution: mv - mv/(1+pct/100)
+                  const denom = 1 + p.change_pct_today / 100;
+                  if (denom !== 0) todayUsd += p.market_value_usd - p.market_value_usd / denom;
+                  haveAny = true;
+                }
+              }
+              const todayPct = todayPctDen > 0 ? todayPctNum / todayPctDen : null;
+              return (
+                <div className={`text-[13px] leading-tight ${colorPnl(haveAny ? todayUsd : null)}`}>
+                  <FlipNumber value={haveAny ? `${fmtMoney(totalsToDisplay(todayUsd), displayCcy)} (${fmtPct(todayPct)}) today` : "—"} />
+                </div>
+              );
+            })()}
           </div>
           <div className="flex-1 grid grid-cols-4 gap-2">
             {classGroups.map((g) => {
