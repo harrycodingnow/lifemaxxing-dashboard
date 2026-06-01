@@ -47,7 +47,7 @@ export async function GET() {
   let pnlPct: number | null = null;
   try {
     const q = await getCryptoQuotesBatch(["BTC"]);
-    currentPrice = q["BTC"]?.price ?? null;
+    currentPrice = q.get("BTC")?.price ?? null;
     if (currentPrice != null && totalBtc > 0) {
       marketValue = totalBtc * currentPrice;
       pnl = marketValue - totalUsdSpent;

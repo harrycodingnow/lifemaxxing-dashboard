@@ -1,0 +1,132 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`prompts > snapshot: prompts are stable (intentional edits only) 1`] = `
+{
+  "batch": "The user is logging MULTIPLE separate entries in one message (some mix of stock/crypto trades, meals, and possibly a body weight). Split the message into independent entries and parse each one.
+
+Output ONLY one JSON object on the LAST line, no markdown fences, this exact schema:
+{
+  "entries": [
+    {
+      "kind": "trade",
+      "payload": {
+        "asset_type": "tw_stock"|"us_stock"|"crypto",
+        "symbol": "<canonical ticker; TW=NNNN.TW, US=plain ticker, crypto=upper symbol>",
+        "display_name": "<human readable>",
+        "side": "buy"|"sell",
+        "quantity": <number>,
+        "price": <number, native ccy per share/coin>,
+        "currency": "TWD"|"USD",
+        "note": "<short or empty>"
+      }
+    },
+    {
+      "kind": "meal",
+      "raw": "<the original substring describing this meal>",
+      "payload": {
+        "meal_type": "breakfast|lunch|dinner|snack|unknown",
+        "items": [{"name":"<food>","portion":"<e.g. 100g>","calories":<num>,"protein_g":<num>,"carbs_g":<num>,"fat_g":<num>}],
+        "totals": {"calories":<num>,"protein_g":<num>,"carbs_g":<num>,"fat_g":<num>},
+        "sources": ["<source>"],
+        "confidence": "low|medium|high",
+        "notes": "<short or empty>"
+      }
+    },
+    {
+      "kind": "weight",
+      "payload": {"weight_kg": <number, normalized to kg>, "note": "<short or empty>"}
+    }
+  ]
+}
+
+Rules:
+- TW tickers: 台積電/TSMC=2330.TW, 鴻海=2317.TW, 聯發科=2454.TW, 0050=0050.TW.
+- "NT$"/"NTD"/台幣/塊 => TWD. "$"/USD => USD. Crypto defaults to USD.
+- Each meal is ONE eating occasion. If the user lists two clearly separate meals (e.g. "breakfast: X. lunch: Y."), emit two meal entries.
+- Each trade is ONE buy or sell. Two trades in one sentence => two entries.
+- For meals: estimate kcal + macros from your nutrition knowledge (USDA / standard databases). Round to whole numbers. Include 1-3 source names in "sources".
+- Use kg for weight (convert lb*0.453592 if needed).
+- Order entries in the order they appear in the message.
+- Never invent fields. Never wrap output in markdown fences.
+
+User message:
+"""X"""",
+  "meal": "You are a nutrition research assistant. Estimate calories and macros for the food described below, using your knowledge of standard USDA / well-known nutrition databases. The user may write English or Chinese.
+
+For each distinct food item, estimate: portion (with units), calories (kcal), protein (g), carbs (g), fat (g). Then sum totals.
+
+Also list 1-3 source references (URLs or database names like "USDA FoodData Central", "MyFitnessPal", "Cronometer", brand nutrition label) that justify your numbers.
+
+Output ONLY one JSON object on the LAST line, no markdown fences, this schema:
+{
+  "meal_type": "breakfast|lunch|dinner|snack|unknown",
+  "items": [
+    {"name":"<food>","portion":"<e.g. 100g, 1 bowl, 1 cup>","calories":<num>,"protein_g":<num>,"carbs_g":<num>,"fat_g":<num>}
+  ],
+  "totals": {"calories":<num>,"protein_g":<num>,"carbs_g":<num>,"fat_g":<num>},
+  "sources": ["<source name or URL>", "..."],
+  "confidence": "low|medium|high",
+  "notes": "<short caveat or empty>"
+}
+
+Be realistic. Round to whole numbers. If a portion is ambiguous, assume a typical serving and say so in notes.
+
+User meal entry:
+"""X"""",
+  "router": "You are a strict JSON router for a personal finance + nutrition + body-metrics logger.
+
+Classify the user message into exactly ONE intent:
+  - "trade"     : a SINGLE stock or crypto buy/sell
+  - "meal"      : a SINGLE meal/snack/drink (one eating occasion, possibly with multiple items)
+  - "weight"    : a body-weight measurement (e.g. "weight 72.5kg", "今天 73.2 公斤")
+  - "batch"     : MULTIPLE separate log entries in one message (e.g. two distinct trades, OR a trade + a meal, OR breakfast + lunch as separate meals). Use this when the user is clearly logging more than one independent thing.
+  - "question"  : the user is asking a question, not logging anything
+  - "unknown"   : cannot determine
+
+Respond with ONLY a single JSON object on the LAST line, no prose, no markdown fences:
+{"intent":"trade|meal|weight|batch|question|unknown","reason":"<one short sentence>"}
+
+User message:
+"""X"""",
+  "trade": "Parse this trade log entry into strict JSON. The user may write in English or Chinese.
+
+Output ONLY one JSON object on the last line of your reply, with this exact schema:
+{
+  "asset_type": "tw_stock" | "us_stock" | "crypto",
+  "symbol": "<canonical ticker; for TW stocks use NNNN.TW like 2330.TW; for US use plain ticker like AAPL; for crypto use upper-case ticker like BTC, ETH, SOL>",
+  "display_name": "<human readable name e.g. TSMC, Apple, Bitcoin>",
+  "side": "buy" | "sell",
+  "quantity": <number>,
+  "price": <number, price per share/coin in native currency>,
+  "currency": "TWD" | "USD",
+  "note": "<short note or empty string>"
+}
+
+Rules:
+- Taiwan tickers: 台積電/TSMC=2330.TW, 鴻海=2317.TW, 聯發科=2454.TW, 0050=0050.TW, etc.
+- "NT$", "NTD", "台幣", "塊" => TWD. "$", "USD" => USD. Crypto defaults to USD unless stated.
+- If the user says "bought 2 shares of TSMC at NT$945" -> asset_type tw_stock, symbol 2330.TW, qty 2, price 945, currency TWD.
+- If quantity is omitted but a total cost is given, set quantity to total/price if both present, otherwise quantity=1.
+- Never invent fields. Never wrap in markdown fences.
+
+User entry:
+"""X"""",
+  "weight": "Parse this body-weight log entry into strict JSON. The user may write English or Chinese, in kg or lb.
+
+Output ONLY one JSON object on the LAST line, no markdown fences, schema:
+{
+  "value": <number, weight as the user wrote it>,
+  "unit": "kg" | "lb",
+  "note": "<short note or empty string>"
+}
+
+Rules:
+- Chinese 公斤/kg/千克 -> "kg". 磅/lb/lbs/pounds -> "lb".
+- If no explicit unit and value is between 30 and 200 (with optional decimals), assume "kg".
+- If no explicit unit and value is between 200 and 400, assume "lb".
+- Any extra context like "this morning", "after workout", "起床" goes into note.
+
+User entry:
+"""X"""",
+}
+`;
