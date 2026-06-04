@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import db from "@/lib/db";
 import { hermesCall, extractJson } from "@/lib/hermes";
-import { ROUTER_PROMPT, TRADE_PARSE_PROMPT, MEAL_RESEARCH_PROMPT, WEIGHT_PARSE_PROMPT, BATCH_PARSE_PROMPT } from "@/lib/prompts";
+import { ROUTER_PROMPT, TRADE_PARSE_PROMPT, MEAL_RESEARCH_PROMPT, WEIGHT_PARSE_PROMPT, BATCH_PARSE_PROMPT, TODO_PARSE_PROMPT } from "@/lib/prompts";
+import { matchKnownFoods, hitToMealItem, type KnownFoodHit } from "@/lib/known-foods";
 
 // SECURITY: this endpoint shells out to the local `hermes` CLI with --yolo --ignore-rules,
 // granting full tool access on the host machine. NEVER expose this dashboard to a public
@@ -9,7 +10,7 @@ import { ROUTER_PROMPT, TRADE_PARSE_PROMPT, MEAL_RESEARCH_PROMPT, WEIGHT_PARSE_P
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type RouterOut = { intent: "trade" | "meal" | "weight" | "batch" | "question" | "unknown"; reason: string };
+type RouterOut = { intent: "trade" | "meal" | "weight" | "todo" | "batch" | "question" | "unknown"; reason: string };
 type TradeOut = {
   asset_type: "tw_stock" | "us_stock" | "crypto";
   symbol: string;
@@ -20,14 +21,150 @@ type TradeOut = {
   currency: "TWD" | "USD";
   note: string;
 };
+type MealItem = { name: string; portion: string; calories: number; protein_g: number; carbs_g: number; fat_g: number };
+type MealTotals = { calories: number; protein_g: number; carbs_g: number; fat_g: number };
 type MealOut = {
   meal_type: string;
-  items: Array<{ name: string; portion: string; calories: number; protein_g: number; carbs_g: number; fat_g: number }>;
-  totals: { calories: number; protein_g: number; carbs_g: number; fat_g: number };
+  items: MealItem[];
+  totals: MealTotals;
   sources: string[];
   confidence: string;
   notes: string;
 };
+
+type TodoPayload = { title: string; notes: string; due_ts: number | null; priority: number };
+
+// Resolve loose date words to a Date. Returns null if unparseable.
+function resolveTodoDate(token: string): Date | null {
+  const now = new Date();
+  const t = token.trim().toLowerCase();
+  if (!t) return null;
+  const days = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+  if (t === "today" || t === "今天") return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0);
+  if (t === "tomorrow" || t === "tmr" || t === "明天") {
+    const d = new Date(now); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d;
+  }
+  if (t === "後天" || t === "day after tomorrow") {
+    const d = new Date(now); d.setDate(d.getDate() + 2); d.setHours(9, 0, 0, 0); return d;
+  }
+  // "in 2h", "in 30m", "in 3 days"
+  const rel = t.match(/^in\s+(\d+)\s*(m|min|mins|h|hr|hrs|hour|hours|d|day|days|w|wk|week|weeks)$/);
+  if (rel) {
+    const n = parseInt(rel[1], 10);
+    const unit = rel[2];
+    const d = new Date(now);
+    if (unit.startsWith("m") && !unit.startsWith("min") === false || unit === "m" || unit.startsWith("min"))
+      d.setMinutes(d.getMinutes() + n);
+    else if (unit.startsWith("h")) d.setHours(d.getHours() + n);
+    else if (unit.startsWith("d")) { d.setDate(d.getDate() + n); d.setHours(9, 0, 0, 0); }
+    else if (unit.startsWith("w")) { d.setDate(d.getDate() + n * 7); d.setHours(9, 0, 0, 0); }
+    return d;
+  }
+  // Weekday: "mon", "next fri"
+  const wd = t.match(/^(?:next\s+)?(sun|mon|tue|wed|thu|fri|sat)/);
+  if (wd) {
+    const target = days.indexOf(wd[1]);
+    const d = new Date(now);
+    let diff = (target - d.getDay() + 7) % 7;
+    if (diff === 0 || t.startsWith("next")) diff = diff === 0 ? 7 : diff + (t.startsWith("next") ? 7 : 0);
+    d.setDate(d.getDate() + diff); d.setHours(9, 0, 0, 0);
+    return d;
+  }
+  // Time-only HH:MM or H(am|pm)
+  const tm = t.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
+  if (tm) {
+    let h = parseInt(tm[1], 10);
+    const m = tm[2] ? parseInt(tm[2], 10) : 0;
+    const ap = tm[3];
+    if (ap === "pm" && h < 12) h += 12;
+    if (ap === "am" && h === 12) h = 0;
+    const d = new Date(now); d.setHours(h, m, 0, 0);
+    if (d.getTime() < now.getTime()) d.setDate(d.getDate() + 1);
+    return d;
+  }
+  // ISO-ish "2026-06-05" or "2026-06-05 15:00"
+  const iso = t.match(/^(\d{4}-\d{1,2}-\d{1,2})(?:[\sT](\d{1,2}):(\d{2}))?$/);
+  if (iso) {
+    const [y, mo, da] = iso[1].split("-").map(Number);
+    const h = iso[2] ? parseInt(iso[2], 10) : 9;
+    const mn = iso[3] ? parseInt(iso[3], 10) : 0;
+    return new Date(y, mo - 1, da, h, mn, 0, 0);
+  }
+  return null;
+}
+
+// Fast lexical todo parser: "title @<date/time> !<priority>"
+// Examples: "pay rent @tomorrow !high", "call mom @3pm"
+function parseFastTodo(body: string): TodoPayload {
+  let priority = 0;
+  let due_ts: number | null = null;
+  let s = body;
+  // priority flag
+  const pm = s.match(/(?:^|\s)!(low|med|medium|high|urgent|1|2|3)\b/i);
+  if (pm) {
+    const v = pm[1].toLowerCase();
+    priority = v === "urgent" || v === "high" || v === "3" ? 3
+      : v === "med" || v === "medium" || v === "2" ? 2
+      : v === "low" || v === "1" ? 1 : 0;
+    s = s.replace(pm[0], " ");
+  }
+  // @date / @time — greedy: capture until next "@" or "!" or end
+  const am = s.match(/(?:^|\s)@([^@!]+?)(?=\s+[!@]|$)/);
+  if (am) {
+    const d = resolveTodoDate(am[1].trim());
+    if (d) due_ts = d.getTime();
+    s = s.replace(am[0], " ");
+  }
+  const title = s.replace(/\s+/g, " ").trim();
+  return { title: title || body.trim(), notes: "", due_ts, priority };
+}
+
+function todoPreview(t: TodoPayload): string {
+  const bits: string[] = [t.title || "(untitled)"];
+  if (t.due_ts) {
+    const d = new Date(t.due_ts);
+    const sameDay = new Date(); sameDay.setHours(0, 0, 0, 0);
+    const tDay = new Date(d); tDay.setHours(0, 0, 0, 0);
+    const isToday = sameDay.getTime() === tDay.getTime();
+    const datePart = isToday ? "today" : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    const timePart = d.getHours() === 0 && d.getMinutes() === 0 ? "" :
+      ` ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+    bits.push(`· ${datePart}${timePart}`);
+  }
+  if (t.priority) bits.push(`· P${t.priority}`);
+  return bits.join(" ");
+}
+
+function buildMealFromHitsAndExtra(
+  hits: KnownFoodHit[],
+  extra: MealOut | null,
+  meal_type: string,
+): MealOut {
+  const items: MealItem[] = hits.map(hitToMealItem);
+  if (extra?.items?.length) items.push(...extra.items);
+  const totals: MealTotals = items.reduce<MealTotals>(
+    (acc, it) => {
+      acc.calories += it.calories || 0;
+      acc.protein_g += it.protein_g || 0;
+      acc.carbs_g += it.carbs_g || 0;
+      acc.fat_g += it.fat_g || 0;
+      return acc;
+    },
+    { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 },
+  );
+  const sources = [
+    ...hits.map((h) => h.item.source),
+    ...(extra?.sources || []),
+  ];
+  return {
+    meal_type: extra?.meal_type || meal_type || "unknown",
+    items,
+    totals,
+    sources: Array.from(new Set(sources)),
+    confidence: hits.length && !extra ? "high" : extra?.confidence || "medium",
+    notes: extra?.notes || (hits.length ? "Known-food table hit" : ""),
+  };
+}
 
 // POST /api/log -> PARSE ONLY (no DB write).
 // Returns a preview the client must confirm via POST /api/log/commit.
@@ -35,6 +172,34 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const text: string = (body?.text || "").toString().trim();
   if (!text) return NextResponse.json({ error: "empty text" }, { status: 400 });
+
+  // Fast path: todo with explicit prefix ("todo:", "task:", "/todo", "提醒:", "待辦:")
+  // Avoids any LLM call. Supports @<date/time> and !<priority> flags.
+  {
+    const todoPrefix = text.match(/^\s*(?:\/todo|todo|task|提醒|待辦)\s*[:：]\s*(.+)$/i);
+    if (todoPrefix) {
+      const fast = parseFastTodo(todoPrefix[1].trim());
+      return NextResponse.json({
+        kind: "todo",
+        preview: todoPreview(fast),
+        payload: fast,
+        text,
+        needsConfirm: true,
+      });
+    }
+  }
+
+  // Fast path: if the entire input matches the local known-foods table, skip both
+  // the router and the meal LLM call. This is by far the most common case and
+  // makes logging a familiar SKU effectively instant.
+  {
+    const { hits, leftover } = matchKnownFoods(text);
+    if (hits.length && !leftover) {
+      const meal = buildMealFromHitsAndExtra(hits, null, "unknown");
+      const preview = `${Math.round(meal.totals.calories)} kcal · P${Math.round(meal.totals.protein_g)}g C${Math.round(meal.totals.carbs_g)}g F${Math.round(meal.totals.fat_g)}g`;
+      return NextResponse.json({ kind: "meal", preview, payload: meal, text, needsConfirm: true });
+    }
+  }
 
   // 1) route intent
   let routed: RouterOut;
@@ -95,18 +260,59 @@ export async function POST(req: NextRequest) {
   }
 
   if (routed.intent === "meal") {
+    // Try the local known-foods table first. If every chunk is a hit, skip Hermes entirely.
+    const { hits, leftover } = matchKnownFoods(text);
     let meal: MealOut;
-    try {
-      const raw = await hermesCall(MEAL_RESEARCH_PROMPT(text), { timeoutMs: 120_000 });
-      meal = extractJson<MealOut>(raw);
-    } catch (e) {
-      return NextResponse.json(
-        { error: `meal research failed: ${(e as Error).message}`, intent: routed.intent },
-        { status: 500 },
-      );
+    if (hits.length && !leftover) {
+      meal = buildMealFromHitsAndExtra(hits, null, "unknown");
+    } else {
+      let extra: MealOut | null = null;
+      if (leftover || !hits.length) {
+        try {
+          const raw = await hermesCall(MEAL_RESEARCH_PROMPT(leftover || text), { timeoutMs: 120_000 });
+          extra = extractJson<MealOut>(raw);
+        } catch (e) {
+          if (!hits.length) {
+            return NextResponse.json(
+              { error: `meal research failed: ${(e as Error).message}`, intent: routed.intent },
+              { status: 500 },
+            );
+          }
+          // Partial: we still have known-food hits; proceed without extra.
+        }
+      }
+      meal = buildMealFromHitsAndExtra(hits, extra, "unknown");
     }
     const preview = `${Math.round(meal.totals.calories)} kcal · P${Math.round(meal.totals.protein_g)}g C${Math.round(meal.totals.carbs_g)}g F${Math.round(meal.totals.fat_g)}g`;
     return NextResponse.json({ kind: "meal", preview, payload: meal, text, needsConfirm: true });
+  }
+
+  if (routed.intent === "todo") {
+    let parsed: { title: string; notes: string; due_iso: string; priority: number };
+    try {
+      const nowIso = new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
+        .toISOString().slice(0, 16);
+      const raw = await hermesCall(TODO_PARSE_PROMPT(text, nowIso), { timeoutMs: 60_000 });
+      parsed = extractJson(raw);
+    } catch (e) {
+      // LLM failed — fall back to fast parser on the raw text
+      const fb = parseFastTodo(text);
+      parsed = { title: fb.title, notes: fb.notes, due_iso: "", priority: fb.priority };
+    }
+    const llmDue = parsed.due_iso ? new Date(parsed.due_iso).getTime() || null : null;
+    const payload: TodoPayload = {
+      title: (parsed.title || text).slice(0, 200),
+      notes: parsed.notes || "",
+      due_ts: llmDue,
+      priority: Math.max(0, Math.min(3, Number(parsed.priority) || 0)),
+    };
+    return NextResponse.json({
+      kind: "todo",
+      preview: todoPreview(payload),
+      payload,
+      text,
+      needsConfirm: true,
+    });
   }
 
   if (routed.intent === "weight") {

@@ -4,12 +4,13 @@ Classify the user message into exactly ONE intent:
   - "trade"     : a SINGLE stock or crypto buy/sell
   - "meal"      : a SINGLE meal/snack/drink (one eating occasion, possibly with multiple items)
   - "weight"    : a body-weight measurement (e.g. "weight 72.5kg", "今天 73.2 公斤")
+  - "todo"      : a task / reminder / to-do item the user wants to remember and do later (e.g. "remind me to call mom tomorrow at 3pm", "todo: pay rent", "明天記得繳水費", "task: refactor parser this week"). Triggers: "remind me to", "remember to", "todo", "task", "提醒我", "記得", "待辦".
   - "batch"     : MULTIPLE separate log entries in one message (e.g. two distinct trades, OR a trade + a meal, OR breakfast + lunch as separate meals). Use this when the user is clearly logging more than one independent thing.
   - "question"  : the user is asking a question, not logging anything
   - "unknown"   : cannot determine
 
 Respond with ONLY a single JSON object on the LAST line, no prose, no markdown fences:
-{"intent":"trade|meal|weight|batch|question|unknown","reason":"<one short sentence>"}
+{"intent":"trade|meal|weight|todo|batch|question|unknown","reason":"<one short sentence>"}
 
 User message:
 """${text}"""`;
@@ -38,11 +39,16 @@ Rules:
 User entry:
 """${text}"""`;
 
-export const MEAL_RESEARCH_PROMPT = (text: string) => `You are a nutrition research assistant. Estimate calories and macros for the food described below, using your knowledge of standard USDA / well-known nutrition databases. The user may write English or Chinese.
+export const MEAL_RESEARCH_PROMPT = (text: string) => `You are a nutrition research assistant. Estimate calories and macros for the food described below. The user may write English or Chinese.
 
-For each distinct food item, estimate: portion (with units), calories (kcal), protein (g), carbs (g), fat (g). Then sum totals.
+SPEED RULES (this runs in a user-facing log flow — be FAST):
+  - For each item, do AT MOST ONE web_search, and only if the item has an explicit brand (7-11/711, 全家/FamilyMart, 萊爾富, Louisa/路易莎, Starbucks/星巴克, McDonald's/麥當勞, 摩斯, etc.) or a clear packaged SKU name. Skip search entirely for generic foods (白飯, 蛋, 雞胸肉 with no brand) — use your nutrition knowledge.
+  - Query format: \`<brand> <product> 熱量\` (one search, take the first credible result with a number — official brand page, 7-11/全家 product page, or blog citing the label). Don't keep searching for a "better" source.
+  - Hard ceiling: total web_search calls <= number of branded items, never more.
 
-Also list 1-3 source references (URLs or database names like "USDA FoodData Central", "MyFitnessPal", "Cronometer", brand nutrition label) that justify your numbers.
+For each distinct food item, return: portion (with units), calories (kcal), protein (g), carbs (g), fat (g). Then sum totals.
+
+In "sources", list the actual URLs you found via web_search (or the database name for generic fallbacks). If you used web_search, the source MUST be a real URL you read, not "USDA FoodData Central" hand-waved.
 
 Output ONLY one JSON object on the LAST line, no markdown fences, this schema:
 {
@@ -75,6 +81,30 @@ Rules:
 - If no explicit unit and value is between 30 and 200 (with optional decimals), assume "kg".
 - If no explicit unit and value is between 200 and 400, assume "lb".
 - Any extra context like "this morning", "after workout", "起床" goes into note.
+
+User entry:
+"""${text}"""`;
+
+export const TODO_PARSE_PROMPT = (text: string, nowIso: string) => `Parse this todo / reminder into strict JSON. The user may write in English or Chinese.
+
+Current local datetime (for resolving "tomorrow", "next Mon", "in 2 hours"): ${nowIso}
+
+Output ONLY one JSON object on the LAST line, no markdown fences, schema:
+{
+  "title": "<short imperative task title; strip filler like 'remind me to', '提醒我' but keep the verb>",
+  "notes": "<longer detail or empty string>",
+  "due_iso": "<ISO 8601 local datetime like 2026-06-04T15:00 OR empty string if no due date>",
+  "priority": 0
+}
+
+Rules:
+- "remind me to call mom tomorrow at 3pm" -> title="call mom", due_iso="<tomorrow's date>T15:00", priority=0.
+- "todo: refactor parser this week" -> title="refactor parser", notes="this week" (or empty), due_iso="".
+- "明天記得繳水費" -> title="繳水費", due_iso="<tomorrow's date>T09:00" (default 09:00 for date-only).
+- Priority: explicit "high"/"urgent"/"!high"/緊急/重要 -> 3. "medium"/"!med" -> 2. "low"/"!low" -> 1. Otherwise 0.
+- Date-only ("tomorrow", "Friday", "next Mon") with no time -> append "T09:00".
+- If absolutely no time reference, set due_iso to "".
+- Never wrap output in markdown fences. Never invent fields.
 
 User entry:
 """${text}"""`;
@@ -121,7 +151,7 @@ Rules:
 - "NT$"/"NTD"/台幣/塊 => TWD. "$"/USD => USD. Crypto defaults to USD.
 - Each meal is ONE eating occasion. If the user lists two clearly separate meals (e.g. "breakfast: X. lunch: Y."), emit two meal entries.
 - Each trade is ONE buy or sell. Two trades in one sentence => two entries.
-- For meals: estimate kcal + macros from your nutrition knowledge (USDA / standard databases). Round to whole numbers. Include 1-3 source names in "sources".
+- For meals: estimate kcal + macros from your nutrition knowledge. For **branded** items only (7-11/711, 全家, 萊爾富, Louisa, Starbucks, McDonald's, 摩斯, etc. — explicit brand+product like "711 - 增肌蛋白餐"), do AT MOST ONE web_search per branded item with query "<brand> <product> 熱量"; take the first credible number and move on. Skip web_search for generic unbranded foods (白飯, 蛋). Total web_search calls <= number of branded items. Put real URLs in "sources" when used. Round to whole numbers.
 - Use kg for weight (convert lb*0.453592 if needed).
 - Order entries in the order they appear in the message.
 - Never invent fields. Never wrap output in markdown fences.

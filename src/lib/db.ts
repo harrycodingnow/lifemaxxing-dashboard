@@ -54,6 +54,38 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS todos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_ts INTEGER NOT NULL,
+  updated_ts INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  notes TEXT,
+  due_ts INTEGER,                      -- nullable; epoch ms
+  priority INTEGER NOT NULL DEFAULT 0, -- 0 none, 1 low, 2 med, 3 high
+  done INTEGER NOT NULL DEFAULT 0,     -- 0 open, 1 completed
+  done_ts INTEGER,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  deleted_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_todos_open ON todos(done, deleted_at, due_ts);
+
+CREATE TABLE IF NOT EXISTS projects (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_ts INTEGER NOT NULL,
+  updated_ts INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  phase TEXT NOT NULL DEFAULT 'idea',  -- idea|planning|building|shipping|maintaining|paused|done
+  status TEXT NOT NULL DEFAULT 'on_track', -- on_track|at_risk|blocked|done
+  current_problem TEXT,                -- what's blocking / open question right now
+  next_step TEXT,                      -- next concrete action
+  priority INTEGER NOT NULL DEFAULT 2, -- 1 low, 2 med, 3 high
+  url TEXT,                            -- repo / docs link
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  archived_at INTEGER                  -- soft-archive (no hard delete per SOUL)
+);
+CREATE INDEX IF NOT EXISTS idx_projects_active ON projects(archived_at, phase, priority);
 `);
 
 // Idempotent migration: add deleted_at to trades/meals/weights if missing.

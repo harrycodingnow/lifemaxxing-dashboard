@@ -4,7 +4,7 @@ import db from "@/lib/db";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Kind = "trade" | "meal" | "weight";
+type Kind = "trade" | "meal" | "weight" | "todo";
 
 function writeEntry(kind: Kind, payload: any, sourceText: string, ts: number) {
   if (kind === "trade") {
@@ -64,6 +64,25 @@ function writeEntry(kind: Kind, payload: any, sourceText: string, ts: number) {
     return {
       id: info.lastInsertRowid,
       message: `weight ${weight_kg} kg (${(weight_kg * 2.20462).toFixed(1)} lbs)`,
+    };
+  }
+  if (kind === "todo") {
+    const t = payload;
+    const title = (t.title || "").toString().slice(0, 200);
+    if (!title) throw new Error("todo missing title");
+    const notes = (t.notes || "").toString();
+    const due_ts = t.due_ts == null ? null : Number(t.due_ts);
+    const priority = Math.max(0, Math.min(3, Number(t.priority) || 0));
+    const info = db
+      .prepare(
+        `INSERT INTO todos (created_ts, updated_ts, title, notes, due_ts, priority, done, sort_order)
+         VALUES (?,?,?,?,?,?,0,0)`,
+      )
+      .run(ts, ts, title, notes, due_ts, priority);
+    const due = due_ts ? new Date(due_ts).toLocaleString() : "no due";
+    return {
+      id: info.lastInsertRowid,
+      message: `todo "${title}" (${due}${priority ? `, P${priority}` : ""})`,
     };
   }
   throw new Error(`unknown kind: ${kind}`);

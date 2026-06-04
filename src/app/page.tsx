@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   LineChart,
   Line,
@@ -10,12 +10,12 @@ import {
   Tooltip,
   ResponsiveContainer,
   ReferenceLine,
-  PieChart,
-  Pie,
-  Cell,
 } from "recharts";
 import FlipNumber from "@/components/FlipNumber";
 import EditModal, { type FieldDef } from "@/components/EditModal";
+import { Marquee, type MarqueeItem } from "@/components/Marquee";
+import TodoMenu from "@/components/TodoMenu";
+import { DashboardLayout, type WidgetSpec } from "@/components/DashboardLayout";
 
 type Position = {
   asset_type: string;
@@ -99,6 +99,9 @@ function colorPnl(n: number | null | undefined) {
 export default function Home() {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [queue, setQueue] = useState<string[]>([]);
+  const queueRef = useRef<string[]>([]);
+  useEffect(() => { queueRef.current = queue; }, [queue]);
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [nutrition, setNutrition] = useState<Nutrition | null>(null);
   const [weight, setWeight] = useState<Weight | null>(null);
@@ -106,6 +109,45 @@ export default function Home() {
   const [toast, setToast] = useState<string | null>(null);
   const [editGoals, setEditGoals] = useState(false);
   const [editing, setEditing] = useState<null | "trades" | "meals" | "weights">(null);
+  const [holdingsView, setHoldingsView] = useState<null | "all" | "tw_stock" | "us_stock" | "crypto">(null);
+  useEffect(() => {
+    if (!holdingsView) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setHoldingsView(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [holdingsView]);
+
+  // ── Projects ───────────────────────────────────────────────────────────
+  type ProjectRow = {
+    id: number;
+    created_ts: number;
+    updated_ts: number;
+    name: string;
+    description: string | null;
+    phase: string;
+    status: string;
+    current_problem: string | null;
+    next_step: string | null;
+    priority: number;
+    url: string | null;
+    sort_order: number;
+    archived_at: number | null;
+  };
+  const [projects, setProjects] = useState<ProjectRow[]>([]);
+  const [editingProject, setEditingProject] = useState<ProjectRow | "new" | null>(null);
+  const loadProjects = useCallback(() => {
+    fetch("/api/projects", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => setProjects(j.rows ?? []))
+      .catch(() => {});
+  }, []);
+  useEffect(() => { loadProjects(); }, [loadProjects]);
+  useEffect(() => {
+    if (!editingProject) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setEditingProject(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editingProject]);
   const [goalsDraft, setGoalsDraft] = useState<{ calories: string; protein_g: string; carbs_g: string; fat_g: string }>({
     calories: "",
     protein_g: "",
@@ -113,6 +155,7 @@ export default function Home() {
     fat_g: "",
   });
   const [savingGoals, setSavingGoals] = useState(false);
+  const [dcaOpen, setDcaOpen] = useState(false);
   const [dca, setDca] = useState<{
     job: { name: string; schedule: string; action: string; source: string; target: string; amountPerRun: number };
     runs: number;
@@ -132,7 +175,8 @@ export default function Home() {
     | { kind: "trade"; preview: string; payload: { asset_type: string; symbol: string; display_name: string; side: "buy" | "sell"; quantity: number; price: number; currency: string; note: string }; text: string }
     | { kind: "meal"; preview: string; payload: { meal_type: string; items: MealItem[]; totals: { calories: number; protein_g: number; carbs_g: number; fat_g: number }; sources: string[]; confidence?: string; notes?: string }; text: string }
     | { kind: "weight"; preview: string; payload: { weight_kg: number; note: string }; text: string }
-    | { kind: "batch"; preview: string; payload: { entries: Array<{ kind: "trade" | "meal" | "weight"; payload: any; raw?: string }> }; text: string };
+    | { kind: "todo"; preview: string; payload: { title: string; notes: string; due_ts: number | null; priority: number }; text: string }
+    | { kind: "batch"; preview: string; payload: { entries: Array<{ kind: "trade" | "meal" | "weight" | "todo"; payload: any; raw?: string }> }; text: string };
   const [pending, setPending] = useState<Pending | null>(null);
   const [committing, setCommitting] = useState(false);
   const [displayCcy, setDisplayCcy] = useState<"TWD" | "USD">("TWD");
@@ -144,8 +188,44 @@ export default function Home() {
   };
   const [stats, setStats] = useState<Stats | null>(null);
   const [cashWindow, setCashWindow] = useState(1);
-  type LastEntry = { kind: "trade" | "meal" | "weight"; id: number; label: string };
+  const todayStr = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const [nutritionDay, setNutritionDay] = useState<string>(todayStr());
+  const shiftNutritionDay = (delta: number) => {
+    const [y, m, d] = nutritionDay.split("-").map(Number);
+    const dt = new Date(y, m - 1, d);
+    dt.setDate(dt.getDate() + delta);
+    const next = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+    if (next > todayStr()) return; // no future
+    setNutritionDay(next);
+  };
+  const isToday = nutritionDay === todayStr();
+  type Headline = { title: string; link: string; source: string };
+  const [headlines, setHeadlines] = useState<Headline[]>([]);
+  const [newsOpen, setNewsOpen] = useState(false);
+  type LastEntry = { kind: "trade" | "meal" | "weight"; id: number; label: string; at: number };
   const [lastEntry, setLastEntry] = useState<LastEntry | null>(null);
+  const [listening, setListening] = useState(false);
+  const [autoConfirm, setAutoConfirm] = useState(false);
+  useEffect(() => {
+    const saved = typeof window !== "undefined" ? window.localStorage.getItem("autoConfirm") : null;
+    if (saved === "1") setAutoConfirm(true);
+  }, []);
+  useEffect(() => {
+    if (typeof window !== "undefined") window.localStorage.setItem("autoConfirm", autoConfirm ? "1" : "0");
+  }, [autoConfirm]);
+  const [placeholderIdx, setPlaceholderIdx] = useState(0);
+  const PLACEHOLDER_EXAMPLES = [
+    "Log a trade, meal, weight, or todo…",
+    "bought 5 NVDA @ 880",
+    "had a louisa shake + bagel",
+    "72.3kg",
+    "todo: pay rent @tomorrow !high",
+    "remind me to call mom tomorrow 3pm",
+    "sold 0.01 BTC @ 95000",
+  ];
 
   useEffect(() => {
     const saved = typeof window !== "undefined" ? window.localStorage.getItem("displayCcy") : null;
@@ -159,7 +239,7 @@ export default function Home() {
     const tz = new Date().getTimezoneOffset(); // minutes east of UTC, negated
     const [p, n, w, d, s] = await Promise.all([
       fetch("/api/portfolio").then((r) => r.json()),
-      fetch("/api/nutrition").then((r) => r.json()),
+      fetch(`/api/nutrition?day=${nutritionDay}`).then((r) => r.json()),
       fetch(`/api/weights?days=${weightRange}`).then((r) => r.json()),
       fetch("/api/recurring").then((r) => r.json()).catch(() => null),
       fetch(`/api/stats?window=${cashWindow}&tz=${tz}`).then((r) => r.json()).catch(() => null),
@@ -169,7 +249,7 @@ export default function Home() {
     setWeight(w);
     setDca(d);
     setStats(s);
-  }, [weightRange, cashWindow]);
+  }, [weightRange, cashWindow, nutritionDay]);
 
   useEffect(() => {
     refreshAll();
@@ -179,6 +259,18 @@ export default function Home() {
     return () => clearInterval(t);
   }, [refreshAll]);
 
+  // Headlines for top marquee — fetch once + refresh every 5 minutes
+  useEffect(() => {
+    const load = () =>
+      fetch("/api/headlines")
+        .then((r) => r.json())
+        .then((j) => Array.isArray(j?.headlines) && setHeadlines(j.headlines))
+        .catch(() => {});
+    load();
+    const t = setInterval(load, 5 * 60_000);
+    return () => clearInterval(t);
+  }, []);
+
   useEffect(() => {
     if (!toast) return;
     const ms = toast === "Saved" && lastEntry ? 10000 : 3000;
@@ -186,11 +278,87 @@ export default function Home() {
     return () => clearTimeout(t);
   }, [toast, lastEntry]);
 
-  async function send() {
-    const t = text.trim();
-    if (!t || busy) return;
-    setBusy(true);
-    setText("");
+  // Rotate placeholder examples every 4s when input is empty + not busy.
+  useEffect(() => {
+    if (busy || text) return;
+    const t = setInterval(() => setPlaceholderIdx((i) => (i + 1) % PLACEHOLDER_EXAMPLES.length), 4000);
+    return () => clearInterval(t);
+  }, [busy, text, PLACEHOLDER_EXAMPLES.length]);
+
+  // Auto-clear pinned last-entry after 30s.
+  useEffect(() => {
+    if (!lastEntry) return;
+    const remaining = 30000 - (Date.now() - lastEntry.at);
+    if (remaining <= 0) { setLastEntry(null); return; }
+    const t = setTimeout(() => setLastEntry(null), remaining);
+    return () => clearTimeout(t);
+  }, [lastEntry]);
+
+  // Voice dictation via MediaRecorder → /api/transcribe (local faster-whisper).
+  const speechSupported = typeof window !== "undefined" &&
+    typeof navigator !== "undefined" && !!navigator.mediaDevices &&
+    typeof (window as unknown as { MediaRecorder?: unknown }).MediaRecorder !== "undefined";
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
+  async function startDictation() {
+    if (!speechSupported) return;
+    // Toggle: if recording, stop → triggers onstop → upload.
+    if (listening && recorderRef.current) {
+      try { recorderRef.current.stop(); } catch {}
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      // Pick a mimetype the browser actually supports (Safari prefers mp4).
+      const mimeCandidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"];
+      const mime = mimeCandidates.find((m) => (window as unknown as { MediaRecorder: { isTypeSupported: (m: string) => boolean } }).MediaRecorder.isTypeSupported(m)) || "";
+      const rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      chunksRef.current = [];
+      rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunksRef.current.push(e.data); };
+      rec.onstart = () => setListening(true);
+      rec.onerror = (e) => {
+        setListening(false);
+        recorderRef.current = null;
+        setToast(`Recorder error: ${(e as unknown as { error?: { message?: string } }).error?.message || "unknown"}`);
+        streamRef.current?.getTracks().forEach((t) => t.stop());
+      };
+      rec.onstop = async () => {
+        setListening(false);
+        recorderRef.current = null;
+        streamRef.current?.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+        const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
+        if (blob.size === 0) { setToast("No audio captured"); return; }
+        try {
+          setToast("Transcribing…");
+          const form = new FormData();
+          const ext = (rec.mimeType || "").includes("mp4") ? "m4a" : (rec.mimeType || "").includes("ogg") ? "ogg" : "webm";
+          form.append("audio", blob, `voice.${ext}`);
+          const r = await fetch("/api/transcribe", { method: "POST", body: form });
+          const j = await r.json();
+          if (!r.ok) { setToast(`Voice error: ${j.error || r.statusText}`); return; }
+          const t = (j.text || "").trim();
+          if (!t) { setToast("Heard nothing"); return; }
+          setText((prev) => (prev ? prev + " " : "") + t);
+          setToast(null);
+        } catch (err) {
+          setToast(`Transcribe failed: ${(err as Error).message}`);
+        }
+      };
+      recorderRef.current = rec;
+      rec.start();
+    } catch (err) {
+      setListening(false);
+      const msg = (err as Error).message || "";
+      setToast(msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("permission")
+        ? "Mic blocked — allow microphone in browser settings"
+        : `Voice start failed: ${msg}`);
+    }
+  }
+
+  async function processOne(t: string) {
     try {
       const r = await fetch("/api/log", {
         method: "POST",
@@ -201,16 +369,80 @@ export default function Home() {
       if (!r.ok) {
         setToast(`Error: ${j.error || r.statusText}`);
       } else if (j.needsConfirm) {
-        setPending({ kind: j.kind, preview: j.preview, payload: j.payload, text: t });
+        if (autoConfirm) {
+          // YOLO: commit immediately, no modal.
+          const cr = await fetch("/api/log/commit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind: j.kind, payload: j.payload, text: t }),
+          });
+          const cj = await cr.json();
+          if (!cr.ok) {
+            setToast(`Auto-save failed: ${cj.error || cr.statusText}`);
+          } else {
+            if (cj.kind === "batch" && Array.isArray(cj.results)) {
+              const ok = cj.results.filter((x: { ok: boolean; id?: number; kind: string }) => x.ok && x.id);
+              if (ok.length > 0) {
+                const last = ok[ok.length - 1];
+                setLastEntry({ kind: last.kind, id: last.id, label: `${ok.length} entries`, at: Date.now() });
+              }
+            } else if (cj.id && (cj.kind === "trade" || cj.kind === "meal" || cj.kind === "weight")) {
+              let label = cj.kind as string;
+              if (j.kind === "trade") label = `${j.payload.side} ${j.payload.symbol}`;
+              else if (j.kind === "meal") label = `${j.payload.meal_type || "meal"}`;
+              else if (j.kind === "weight") label = `${j.payload.weight_kg}kg`;
+              setLastEntry({ kind: cj.kind, id: cj.id, label, at: Date.now() });
+            }
+            setToast(`Saved ${cj.kind}${j.preview ? ` · ${j.preview}` : ""}`);
+            await refreshAll();
+          }
+          return { needsModal: false };
+        } else {
+          setPending({ kind: j.kind, preview: j.preview, payload: j.payload, text: t });
+          return { needsModal: true };
+        }
       } else {
         await refreshAll();
         setToast("Saved");
       }
     } catch (e) {
       setToast(`Error: ${(e as Error).message}`);
-    } finally {
-      setBusy(false);
     }
+    return { needsModal: false };
+  }
+
+  // Drain the queue one item at a time. Stops if a confirm modal opens.
+  const drainingRef = useRef(false);
+  const drainQueue = useCallback(async () => {
+    if (drainingRef.current) return;
+    drainingRef.current = true;
+    try {
+      while (queueRef.current.length > 0) {
+        const next = queueRef.current[0];
+        setQueue((q) => q.slice(1));
+        setBusy(true);
+        const res = await processOne(next);
+        setBusy(false);
+        if (res.needsModal) break; // wait for user to resolve modal
+      }
+    } finally {
+      drainingRef.current = false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoConfirm]);
+
+  async function send() {
+    const t = text.trim();
+    if (!t) return;
+    setText("");
+    // If already busy or there's a pending modal, just enqueue.
+    if (busy || pending || drainingRef.current) {
+      setQueue((q) => [...q, t]);
+      return;
+    }
+    setQueue((q) => [...q, t]);
+    // Defer to let state propagate, then drain.
+    setTimeout(() => { void drainQueue(); }, 0);
   }
 
   async function confirmPending() {
@@ -231,14 +463,14 @@ export default function Home() {
           const ok = j.results.filter((x: { ok: boolean; id?: number; kind: string }) => x.ok && x.id);
           if (ok.length > 0) {
             const last = ok[ok.length - 1];
-            setLastEntry({ kind: last.kind, id: last.id, label: `${ok.length} entries` });
+            setLastEntry({ kind: last.kind, id: last.id, label: `${ok.length} entries`, at: Date.now() });
           }
         } else if (j.id && (j.kind === "trade" || j.kind === "meal" || j.kind === "weight")) {
           let label = j.kind as string;
           if (pending.kind === "trade") label = `${pending.payload.side} ${pending.payload.symbol}`;
           else if (pending.kind === "meal") label = `${pending.payload.meal_type || "meal"}`;
           else if (pending.kind === "weight") label = `${pending.payload.weight_kg}kg`;
-          setLastEntry({ kind: j.kind, id: j.id, label });
+          setLastEntry({ kind: j.kind, id: j.id, label, at: Date.now() });
         }
         setToast("Saved");
       }
@@ -248,6 +480,8 @@ export default function Home() {
       setToast(`Commit error: ${(e as Error).message}`);
     } finally {
       setCommitting(false);
+      // Resume queued messages now that the modal is resolved.
+      if (queueRef.current.length > 0) setTimeout(() => { void drainQueue(); }, 0);
     }
   }
 
@@ -263,6 +497,7 @@ export default function Home() {
 
   function cancelPending() {
     setPending(null);
+    if (queueRef.current.length > 0) setTimeout(() => { void drainQueue(); }, 0);
   }
 
   const totals = nutrition?.totals;
@@ -287,17 +522,192 @@ export default function Home() {
     { key: "crypto" as const, label: "Crypto", pill: "24/7", pillTone: "bg-blue-900/40 text-blue-400" },
   ];
 
+  // Build marquee items (top headline + tickers + streaks + DCA countdown)
+  const marqueeItems: MarqueeItem[] = [];
+  // Headlines
+  for (const h of headlines.slice(0, 5)) {
+    marqueeItems.push({
+      key: `news-${h.link || h.title}`,
+      href: h.link || undefined,
+      node: (
+        <>
+          <span className="text-amber-400">📰 {h.source}</span>
+          <span className="text-zinc-400"> · </span>
+          <span className="text-zinc-200">{h.title}</span>
+        </>
+      ),
+    });
+  }
+  // Tickers — top 4 positions by market value (USD)
+  if (portfolio?.positions?.length) {
+    const top = [...portfolio.positions]
+      .filter((p) => p.market_value_usd != null)
+      .sort((a, b) => (b.market_value_usd ?? 0) - (a.market_value_usd ?? 0))
+      .slice(0, 4);
+    for (const p of top) {
+      const pct = p.change_pct_today;
+      const tone = pct == null ? "text-zinc-400" : pct >= 0 ? "text-emerald-400" : "text-rose-400";
+      const arrow = pct == null ? "·" : pct >= 0 ? "▲" : "▼";
+      marqueeItems.push({
+        key: `tk-${p.symbol}`,
+        node: (
+          <>
+            <span className="text-zinc-300">{p.symbol}</span>
+            <span className="text-zinc-500"> {p.current_price != null ? p.current_price.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "—"} </span>
+            <span className={tone}>{arrow} {pct == null ? "—" : `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`}</span>
+          </>
+        ),
+      });
+    }
+  }
+  // Streaks
+  if (stats?.streaks) {
+    const s = stats.streaks;
+    if (s.meal_log > 0) marqueeItems.push({ key: "streak-meals", node: <><span className="text-orange-400">🔥 Meal log:</span> <span className="text-zinc-200">{s.meal_log}d</span></> });
+    if (s.protein_goal > 0) marqueeItems.push({ key: "streak-protein", node: <><span className="text-orange-400">🔥 Protein goal:</span> <span className="text-zinc-200">{s.protein_goal}d</span></> });
+    if (s.weigh_in > 0) marqueeItems.push({ key: "streak-weigh", node: <><span className="text-orange-400">🔥 Weigh-in:</span> <span className="text-zinc-200">{s.weigh_in}d</span></> });
+    if (s.dca > 0) marqueeItems.push({ key: "streak-dca", node: <><span className="text-orange-400">🔥 DCA:</span> <span className="text-zinc-200">{s.dca}w</span></> });
+  }
+  // DCA countdown
+  if (dca?.next_run_ts) {
+    const ms = dca.next_run_ts - Date.now();
+    if (ms > 0) {
+      const days = Math.floor(ms / 86400000);
+      const hours = Math.floor((ms % 86400000) / 3600000);
+      const mins = Math.floor((ms % 3600000) / 60000);
+      const label = days > 0 ? `${days}d ${hours}h` : hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+      marqueeItems.push({
+        key: "dca-countdown",
+        node: (
+          <>
+            <span className="text-amber-300">⏱ Next DCA:</span>{" "}
+            <span className="text-zinc-200">{label}</span>
+            <span className="text-zinc-500"> · ${dca.job.amountPerRun}</span>
+          </>
+        ),
+      });
+    }
+  }
+
   return (
     <div className="h-screen w-screen overflow-hidden bg-zinc-950 text-zinc-100 flex flex-col">
       {/* Top bar */}
-      <header className="flex items-center justify-between px-4 py-2 border-b border-zinc-900 shrink-0">
-        <h1 className="font-serif-display text-2xl leading-none text-zinc-100">lifemaxxing</h1>
-        <div className="flex items-center gap-3 text-[12px] text-zinc-500">
-          <span>USD/TWD {portfolio?.fx.usd_twd.toFixed(2) ?? "—"}</span>
-          <span>·</span>
-          <span>{portfolio?.trade_count ?? 0} trades</span>
-          <span>·</span>
-          <span>{nutrition?.meals.length ?? 0} meals</span>
+      <header className="flex items-center gap-4 px-4 py-2 border-b border-zinc-900 shrink-0">
+        <h1 className="text-xl font-semibold tracking-tight leading-none text-zinc-100 shrink-0">lifemaxxing</h1>
+        <div className="flex-1 min-w-0 px-2">
+          <Marquee items={marqueeItems} intervalMs={6000} className="text-zinc-300" />
+        </div>
+        <div id="dashboard-dock-slot" className="flex items-center gap-1 shrink-0" />
+        <div className="relative shrink-0 hidden">
+          <button
+            onClick={() => setNewsOpen((v) => !v)}
+            className="inline-flex items-center gap-1 rounded-md border border-zinc-800 bg-zinc-900/60 px-2 py-0.5 text-[12px] text-zinc-300 hover:bg-zinc-800"
+            data-testid="news-dropdown-button"
+            aria-label="All headlines"
+          >
+            📰 News <span className="text-zinc-500">({headlines.length})</span>
+            <span className="text-zinc-500">▾</span>
+          </button>
+          {newsOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setNewsOpen(false)} />
+              <div
+                className="absolute right-0 top-full mt-1 w-[420px] max-h-[70vh] overflow-y-auto rounded-md border border-zinc-800 bg-zinc-950/95 backdrop-blur shadow-xl z-50"
+                data-testid="news-dropdown-panel"
+              >
+                <div className="px-3 py-2 border-b border-zinc-900 flex items-center justify-between sticky top-0 bg-zinc-950/95 backdrop-blur">
+                  <span className="text-[11px] uppercase tracking-wider text-zinc-500">Top headlines</span>
+                  <span className="text-[10px] text-zinc-600">refreshes every 5 min</span>
+                </div>
+                {headlines.length === 0 ? (
+                  <div className="px-3 py-6 text-center text-[12px] text-zinc-500">No headlines yet.</div>
+                ) : (
+                  <ul className="divide-y divide-zinc-900">
+                    {headlines.map((h, i) => (
+                      <li key={`${h.link}-${i}`}>
+                        <a
+                          href={h.link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block px-3 py-2 hover:bg-zinc-900/60"
+                          onClick={() => setNewsOpen(false)}
+                        >
+                          <div className="flex items-center gap-2 mb-0.5">
+                            <span className="text-[10px] uppercase tracking-wider text-amber-400">{h.source}</span>
+                          </div>
+                          <div className="text-[12px] text-zinc-200 leading-snug">{h.title}</div>
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+        <div className="flex items-center gap-3 text-[12px] text-zinc-500 shrink-0">
+          <div className="relative ml-2">
+            <button
+              onClick={() => setDcaOpen((v) => !v)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-amber-900/60 bg-amber-950/30 px-2 py-0.5 text-[12px] text-amber-300 hover:bg-amber-900/40"
+              title="Recurring DCA"
+            >
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+              DCA
+              {dca?.totalBtc != null && (
+                <span className="tabular-nums text-zinc-300">{dca.totalBtc.toFixed(4)} {dca.job.target}</span>
+              )}
+              {dca?.pnlPct != null && (
+                <span className={`tabular-nums ${colorPnl(dca.pnl)}`}>{fmtPct(dca.pnlPct)}</span>
+              )}
+              <span className="text-zinc-500">▾</span>
+            </button>
+            {dcaOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setDcaOpen(false)} />
+                <div className="absolute right-0 top-full mt-1 z-50 w-72 rounded-lg border border-zinc-700 bg-zinc-900 p-3 shadow-2xl text-zinc-200">
+                  <div className="flex items-center justify-between text-[12px] text-amber-400/80 mb-2">
+                    <span className="flex items-center gap-1">
+                      <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+                      DCA · {dca?.job.source ?? "USDC"}→{dca?.job.target ?? "BTC"}
+                    </span>
+                    <span className="text-zinc-500">{dca?.runs ?? 0} runs</span>
+                  </div>
+                  <div className="text-2xl font-semibold tabular-nums text-zinc-100">
+                    {dca?.totalBtc != null ? `${dca.totalBtc.toFixed(6)} ${dca.job.target}` : "—"}
+                  </div>
+                  <div className="mt-1 flex items-center justify-between text-[12px]">
+                    <span className={colorPnl(dca?.pnl)}>
+                      {dca?.pnl != null
+                        ? `${fmtMoney(totalsToDisplay(dca.pnl), displayCcy)} (${fmtPct(dca.pnlPct)})`
+                        : dca?.totalUsdSpent != null
+                        ? `${fmtMoney(totalsToDisplay(dca.totalUsdSpent), displayCcy)} in`
+                        : "—"}
+                    </span>
+                    <span className="text-zinc-500">${dca?.job.amountPerRun ?? 8}/day</span>
+                  </div>
+                  <div className="mt-2 pt-2 border-t border-zinc-800 grid grid-cols-2 gap-2 text-[12px]">
+                    <div>
+                      <div className="text-zinc-500">Avg cost</div>
+                      <div className="tabular-nums">{dca?.avgCost != null ? `$${dca.avgCost.toLocaleString(undefined,{maximumFractionDigits:0})}` : "—"}</div>
+                    </div>
+                    <div>
+                      <div className="text-zinc-500">Spot</div>
+                      <div className="tabular-nums">{dca?.currentPrice != null ? `$${dca.currentPrice.toLocaleString(undefined,{maximumFractionDigits:0})}` : "—"}</div>
+                    </div>
+                    <div>
+                      <div className="text-zinc-500">Spent</div>
+                      <div className="tabular-nums">{dca?.totalUsdSpent != null ? `$${dca.totalUsdSpent.toLocaleString(undefined,{maximumFractionDigits:0})}` : "—"}</div>
+                    </div>
+                    <div>
+                      <div className="text-zinc-500">Value</div>
+                      <div className="tabular-nums">{dca?.marketValue != null ? `$${dca.marketValue.toLocaleString(undefined,{maximumFractionDigits:0})}` : "—"}</div>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
           <div className="inline-flex rounded-md border border-zinc-700 overflow-hidden text-[12px] ml-2">
             {(["TWD", "USD"] as const).map((c) => (
               <button
@@ -312,12 +722,24 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Main grid — fits viewport */}
-      <main className="flex-1 grid grid-cols-12 grid-rows-7 gap-2 p-2 overflow-hidden min-h-0">
-        {/* Portfolio header (total + per-class KPIs) */}
-        <section className="col-span-12 row-span-1 rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-2 flex items-center justify-between gap-4 min-h-0">
-          <div className="shrink-0">
-            <div className="text-[11px] uppercase tracking-wider text-zinc-500">Portfolio</div>
+      {/* Main grid — draggable / resizable widget shell */}
+      <DashboardLayout
+        specs={[
+        {
+          id: "portfolio",
+          title: "Portfolio",
+          defaultLayout: { x: 0, y: 0, w: 12, h: 3 },
+          dockable: true,
+          render: () => (
+            <div className="h-full px-3 py-2 flex items-center justify-between gap-4 min-h-0">
+
+          <button
+            type="button"
+            onClick={() => setHoldingsView("all")}
+            className="shrink-0 text-left rounded-md px-1 -mx-1 hover:bg-zinc-800/60 transition-colors"
+            title="Show all holdings"
+          >
+            <div className="text-[11px] uppercase tracking-wider text-zinc-500 flex items-center gap-1">Portfolio <span className="text-zinc-600">▾</span></div>
             <div className="text-3xl font-semibold leading-tight">
               <FlipNumber value={fmtMoney(totalsToDisplay(portfolio?.totals.market_value_usd), displayCcy)} />
             </div>
@@ -343,8 +765,8 @@ export default function Home() {
                 </div>
               );
             })()}
-          </div>
-          <div className="flex-1 grid grid-cols-4 gap-2">
+          </button>
+          <div className="flex-1 grid grid-cols-3 gap-2">
             {classGroups.map((g) => {
               const rows = (portfolio?.positions ?? []).filter((p) => p.asset_type === g.key);
               let mv = 0;
@@ -360,103 +782,81 @@ export default function Home() {
               }
               const today = weightedTodayDen > 0 ? weightedTodayNum / weightedTodayDen : null;
               return (
-                <div key={g.key} className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5">
+                <button
+                  key={g.key}
+                  type="button"
+                  onClick={() => setHoldingsView(g.key)}
+                  className="text-left rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 hover:bg-zinc-800/80 hover:border-zinc-700 transition-colors"
+                  title={`Show ${g.label} holdings`}
+                >
                   <div className="flex items-center justify-between text-[12px] text-zinc-500">
-                    <span>{g.label}</span>
+                    <span className="flex items-center gap-1">{g.label} <span className="text-zinc-600">▾</span></span>
                     <span>{rows.length} pos</span>
                   </div>
                   <div className="text-lg font-semibold tabular-nums"><FlipNumber value={fmtMoney(mv || null, displayCcy)} /></div>
                   <div className={`text-[12px] ${colorPnl(today)}`}>{today != null ? <><FlipNumber value={fmtPct(today)} /> today</> : "—"}</div>
-                </div>
+                </button>
               );
             })}
-            {/* Recurring DCA card */}
-            <div className="rounded-lg border border-amber-900/60 bg-gradient-to-br from-amber-950/40 to-zinc-900 px-3 py-1.5">
-              <div className="flex items-center justify-between text-[12px] text-amber-400/80">
-                <span className="flex items-center gap-1">
-                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
-                  DCA · {dca?.job.source ?? "USDC"}→{dca?.job.target ?? "BTC"}
-                </span>
-                <span className="text-zinc-500">{dca?.runs ?? 0} runs</span>
-              </div>
-              <div className="text-lg font-semibold tabular-nums text-zinc-100">
-                {dca?.totalBtc != null ? `${dca.totalBtc.toFixed(6)} ${dca.job.target}` : "—"}
-              </div>
-              <div className="flex items-center justify-between text-[12px]">
-                <span className={colorPnl(dca?.pnl)}>
-                  {dca?.pnl != null
-                    ? `${fmtMoney(totalsToDisplay(dca.pnl), displayCcy)} (${fmtPct(dca.pnlPct)})`
-                    : dca?.totalUsdSpent != null
-                    ? `${fmtMoney(totalsToDisplay(dca.totalUsdSpent), displayCcy)} in`
-                    : "—"}
-                </span>
-                <span className="text-zinc-500">
-                  ${dca?.job.amountPerRun ?? 8}/day
-                </span>
-              </div>
-            </div>
           </div>
-        </section>
+            </div>
+          ),
+        },
+        {
+          id: "nutrition",
+          title: "Nutrition",
+          defaultLayout: { x: 0, y: 3, w: 6, h: 8 },
+          dockable: true,
+          render: () => (
+            <div className="h-full px-3 py-2 flex flex-col min-h-0">
 
-        {/* TW / US / Crypto holdings (3 columns) */}
-        {classGroups.map((g) => {
-          const rows = (portfolio?.positions ?? []).filter((p) => p.asset_type === g.key);
-          return (
-            <section
-              key={g.key}
-              className="col-span-4 row-span-2 rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-2 flex flex-col min-h-0"
-            >
-              <div className="flex items-center justify-between mb-1.5 shrink-0">
-                <h3 className="text-base font-medium text-zinc-200">{g.label === "TW" ? "TW Stocks" : g.label === "US" ? "US Stocks" : "Crypto"}</h3>
-                <div className="flex items-center gap-1.5">
-                  <span className={`rounded-full px-2 py-0.5 text-[11px] ${g.pillTone}`}>{g.pill}</span>
-                  <button
-                    onClick={() => setEditing("trades")}
-                    className="text-[11px] text-zinc-500 hover:text-zinc-200 px-1.5 py-0.5 rounded border border-zinc-800 hover:border-zinc-600"
-                    title="Edit trades"
-                  >✎</button>
-                </div>
-              </div>
-              <div className="flex-1 overflow-y-auto pr-1 space-y-1.5 min-h-0">
-                {rows.length === 0 && (
-                  <div className="text-[13px] text-zinc-500 py-2">No positions</div>
-                )}
-                {rows.map((p) => (
-                  <div key={`${p.asset_type}|${p.symbol}`} className="group flex items-center justify-between text-[13px]">
-                    <div className="min-w-0">
-                      <div className="truncate font-medium text-zinc-100">{p.symbol.replace(/\.TW$/, "")}</div>
-                      <div className="truncate text-[12px] text-zinc-500">{p.display_name}</div>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <div className="text-right whitespace-nowrap tabular-nums">
-                        <div className="text-zinc-100"><FlipNumber value={fmtMoneyFull(p.current_price, p.currency)} /></div>
-                        <div className={`text-[12px] ${colorPnl(p.change_pct_today)}`}><FlipNumber value={fmtPct(p.change_pct_today)} /></div>
-                      </div>
-                      <button
-                        onClick={() => setEditing("trades")}
-                        title={`Edit ${p.symbol} trades`}
-                        className="opacity-0 group-hover:opacity-100 transition text-[11px] px-1 py-0.5 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"
-                      >✎</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-1.5 pt-1.5 border-t border-zinc-800 flex justify-between text-[12px] shrink-0">
-                <span className="text-zinc-500">Value</span>
-                <span className="text-zinc-200 font-medium tabular-nums">
-                  {fmtMoney(rows.reduce((s, p) => s + (toDisplay(p.market_value_native, p.currency) ?? 0), 0), displayCcy)}
-                </span>
-              </div>
-            </section>
-          );
-        })}
-
-        {/* Nutrition */}
-        <section className="col-span-6 row-span-2 rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-2 flex flex-col min-h-0">
           <div className="flex items-baseline justify-between mb-1.5 shrink-0">
-            <h2 className="text-base font-medium text-zinc-200">Nutrition · {nutrition?.day ?? "today"}</h2>
+            <h2 className="text-base font-medium text-zinc-200 flex items-center gap-1.5">
+              <span>Nutrition ·</span>
+              <button
+                onClick={() => shiftNutritionDay(-1)}
+                className="px-1 text-zinc-500 hover:text-zinc-200"
+                title="Previous day"
+                aria-label="Previous day"
+              >‹</button>
+              <label className="relative cursor-pointer hover:text-white" title="Pick date">
+                <span>{isToday ? "today" : nutritionDay}</span>
+                <input
+                  type="date"
+                  value={nutritionDay}
+                  max={todayStr()}
+                  onChange={(e) => e.target.value && setNutritionDay(e.target.value)}
+                  className="absolute inset-0 opacity-0 cursor-pointer"
+                />
+              </label>
+              <button
+                onClick={() => shiftNutritionDay(1)}
+                disabled={isToday}
+                className="px-1 text-zinc-500 hover:text-zinc-200 disabled:opacity-30 disabled:cursor-not-allowed"
+                title="Next day"
+                aria-label="Next day"
+              >›</button>
+              {!isToday && (
+                <button
+                  onClick={() => setNutritionDay(todayStr())}
+                  className="ml-1 text-[11px] text-zinc-500 hover:text-zinc-200 px-1.5 py-0.5 rounded border border-zinc-800 hover:border-zinc-600"
+                  title="Jump to today"
+                >today</button>
+              )}
+            </h2>
             <div className="flex items-center gap-2">
-              <span className="text-[12px] text-zinc-500">{nutrition?.meals.length ?? 0} meals</span>
+              {(() => {
+                const goal = nutrition?.goals?.calories ?? 0;
+                const eaten = nutrition?.totals?.calories ?? 0;
+                const left = goal - eaten;
+                if (!goal) return <span className="text-[12px] text-zinc-500">{eaten} kcal</span>;
+                const over = left < 0;
+                return (
+                  <span className={`text-[12px] ${over ? "text-amber-400" : "text-zinc-400"}`} title={`${eaten} / ${goal} kcal`}>
+                    {over ? `+${Math.abs(left)} over` : `${left} kcal left`}
+                  </span>
+                );
+              })()}
               <button
                 onClick={() => setEditing("meals")}
                 className="text-[12px] text-zinc-500 hover:text-zinc-200 px-1.5 py-0.5 rounded border border-zinc-800 hover:border-zinc-600"
@@ -536,10 +936,17 @@ export default function Home() {
               <div className="py-3 text-center text-[13px] text-zinc-500">No meals logged today.</div>
             )}
           </div>
-        </section>
+            </div>
+          ),
+        },
+        {
+          id: "weight",
+          title: "Weight",
+          defaultLayout: { x: 6, y: 3, w: 6, h: 8 },
+          dockable: true,
+          render: () => (
+            <div className="h-full px-3 py-2 flex flex-col min-h-0">
 
-        {/* Weight */}
-        <section className="col-span-6 row-span-2 rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-2 flex flex-col min-h-0">
           <div className="flex items-center justify-between mb-1 shrink-0">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-medium text-zinc-200">Weight</h2>
@@ -634,106 +1041,160 @@ export default function Home() {
               </ResponsiveContainer>
             )}
           </div>
-        </section>
-        {/* Insights row: cash-in · streaks · allocation */}
-        <section className="col-span-4 row-span-1 rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-2 flex flex-col justify-between min-h-0">
-          <div className="flex items-center justify-between">
-            <div className="text-[11px] uppercase tracking-wider text-zinc-500">Net cash-in</div>
-            <div className="inline-flex rounded-md border border-zinc-700 overflow-hidden text-[10px]">
-              {([
-                { d: 1, label: "1D" },
-                { d: 7, label: "7D" },
-                { d: 30, label: "30D" },
-              ] as const).map((o) => (
-                <button
-                  key={o.d}
-                  onClick={() => setCashWindow(o.d)}
-                  className={`px-1.5 py-0.5 ${cashWindow === o.d ? "bg-zinc-700 text-zinc-100" : "text-zinc-400 hover:bg-zinc-800"}`}
-                >{o.label}</button>
-              ))}
             </div>
-          </div>
-          <div className="flex items-baseline justify-between">
-            <div className={`text-2xl font-semibold tabular-nums ${stats && stats.cashflow.net_usd >= 0 ? "text-zinc-100" : "text-rose-300"}`}>
-              <FlipNumber value={stats ? fmtMoney(totalsToDisplay(stats.cashflow.net_usd), displayCcy) : "—"} />
-            </div>
-            <div className="text-[11px] text-zinc-500 text-right leading-tight">
-              <div>{stats ? `${stats.cashflow.trade_count} trades` : "—"}</div>
-              <div className="text-emerald-400">+{stats ? fmtMoney(totalsToDisplay(stats.cashflow.buys_usd), displayCcy) : "—"}</div>
-              <div className="text-rose-400">−{stats ? fmtMoney(totalsToDisplay(stats.cashflow.sells_usd), displayCcy) : "—"}</div>
-            </div>
-          </div>
-        </section>
+          ),
+        },
+        {
+          id: "projects",
+          title: "Projects",
+          defaultLayout: { x: 0, y: 11, w: 12, h: 8 },
+          dockable: true,
+          render: () => (
+            <div className="h-full px-3 py-2 flex flex-col min-h-0">
 
-        <section className="col-span-4 row-span-1 rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-2 flex flex-col justify-between min-h-0">
-          <div className="text-[11px] uppercase tracking-wider text-zinc-500">Streaks</div>
-          <div className="grid grid-cols-4 gap-2 text-center">
-            {[
-              { k: "meal_log", label: "Meals", emoji: "🍽" },
-              { k: "protein_goal", label: "Protein", emoji: "💪" },
-              { k: "weigh_in", label: "Weigh", emoji: "⚖️" },
-              { k: "dca", label: "DCA", emoji: "₿" },
-            ].map((s) => {
-              const v = stats?.streaks ? (stats.streaks as Record<string, number>)[s.k] ?? 0 : 0;
-              return (
-                <div key={s.k} className="flex flex-col items-center">
-                  <div className="text-[10px] text-zinc-500">{s.emoji} {s.label}</div>
-                  <div className={`text-lg font-semibold tabular-nums ${v > 0 ? "text-amber-300" : "text-zinc-500"}`}>
-                    {v}<span className="text-[10px] text-zinc-500">d</span>
-                  </div>
-                </div>
-              );
-            })}
+          <div className="flex items-baseline justify-between mb-1.5 shrink-0">
+            <div className="flex items-baseline gap-2">
+              <h2 className="text-[11px] uppercase tracking-widest text-zinc-500">Projects</h2>
+              <span className="text-[10px] text-zinc-600">
+                {projects.length} active
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setEditingProject("new")}
+              className="text-[11px] text-zinc-400 hover:text-zinc-100 border border-zinc-800 hover:border-zinc-600 rounded px-2 py-0.5"
+              title="Add project"
+            >
+              + add
+            </button>
           </div>
-        </section>
-
-        <section className="col-span-4 row-span-1 rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-2 flex items-center gap-3 min-h-0">
-          <div className="text-[11px] uppercase tracking-wider text-zinc-500 shrink-0">Allocation</div>
-          <div className="flex-1 h-full min-h-0">
-            {(() => {
-              const buckets = [
-                { key: "tw_stock", label: "TW", color: "#10b981" },
-                { key: "us_stock", label: "US", color: "#3b82f6" },
-                { key: "crypto", label: "Crypto", color: "#f59e0b" },
-              ];
-              const data = buckets.map((b) => {
-                const v = (portfolio?.positions ?? [])
-                  .filter((p) => p.asset_type === b.key)
-                  .reduce((s, p) => s + (p.market_value_usd ?? 0), 0);
-                return { name: b.label, value: v, color: b.color };
-              }).filter((d) => d.value > 0);
-              const total = data.reduce((s, d) => s + d.value, 0);
-              if (total <= 0) return <div className="h-full flex items-center justify-center text-[12px] text-zinc-500">No positions</div>;
-              return (
-                <div className="h-full flex items-center gap-2">
-                  <div className="h-full aspect-square">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie data={data} dataKey="value" innerRadius="60%" outerRadius="100%" stroke="none">
-                          {data.map((d, i) => <Cell key={i} fill={d.color} />)}
-                        </Pie>
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <div className="flex-1 space-y-0.5 text-[11px]">
-                    {data.map((d) => (
-                      <div key={d.name} className="flex items-center justify-between">
-                        <span className="flex items-center gap-1 text-zinc-400">
-                          <span className="inline-block w-2 h-2 rounded-sm" style={{ background: d.color }} />
-                          {d.name}
-                        </span>
-                        <span className="tabular-nums text-zinc-200">{((d.value / total) * 100).toFixed(0)}%</span>
+          <div className="flex-1 overflow-y-auto -mx-1 px-1">
+            {projects.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-zinc-600 text-[12px]">
+                No projects yet. Click <span className="mx-1 text-zinc-400">+ add</span> to track one.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+                {projects.map((p) => {
+                  const phaseTone: Record<string, string> = {
+                    idea: "bg-zinc-800 text-zinc-300 border-zinc-700",
+                    planning: "bg-sky-950/60 text-sky-300 border-sky-800",
+                    building: "bg-amber-950/60 text-amber-300 border-amber-800",
+                    shipping: "bg-violet-950/60 text-violet-300 border-violet-800",
+                    maintaining: "bg-emerald-950/60 text-emerald-300 border-emerald-800",
+                    paused: "bg-zinc-900 text-zinc-500 border-zinc-800",
+                    done: "bg-zinc-900 text-zinc-600 border-zinc-800 line-through",
+                  };
+                  const statusTone: Record<string, string> = {
+                    on_track: "text-emerald-400",
+                    at_risk: "text-amber-400",
+                    blocked: "text-rose-400",
+                    done: "text-zinc-500",
+                  };
+                  const prioMark = p.priority >= 3 ? "★★★" : p.priority === 2 ? "★★" : p.priority === 1 ? "★" : "";
+                  return (
+                    <button
+                      type="button"
+                      key={p.id}
+                      onClick={() => setEditingProject(p)}
+                      className="text-left rounded-lg border border-zinc-800 hover:border-zinc-600 bg-zinc-950/40 hover:bg-zinc-900/70 transition-colors px-2.5 py-2 flex flex-col gap-1 min-h-0"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="text-[13px] font-medium text-zinc-100 truncate">{p.name}</div>
+                        {prioMark && <div className="text-[9px] text-amber-500 shrink-0 leading-4">{prioMark}</div>}
                       </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })()}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`text-[9px] uppercase tracking-wider rounded border px-1.5 py-0.5 ${phaseTone[p.phase] ?? phaseTone.idea}`}>
+                          {p.phase}
+                        </span>
+                        <span className={`text-[10px] ${statusTone[p.status] ?? "text-zinc-400"}`}>
+                          {p.status.replace("_", " ")}
+                        </span>
+                      </div>
+                      {p.current_problem && (
+                        <div className="text-[11px] text-rose-300/90 leading-snug line-clamp-2">
+                          ⚠ {p.current_problem}
+                        </div>
+                      )}
+                      {p.next_step && (
+                        <div className="text-[11px] text-zinc-400 leading-snug line-clamp-2">
+                          → {p.next_step}
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        </section>
+            </div>
+          ),
+        },
+        {
+          id: "news",
+          title: "📰 News",
+          defaultLayout: { x: 0, y: 19, w: 6, h: 6 },
+          dockable: true,
+          defaultDocked: true,
+          render: () => (
+            <div className="h-full overflow-y-auto">
+              {headlines.length === 0 ? (
+                <div className="px-3 py-6 text-center text-[12px] text-zinc-500">No headlines yet.</div>
+              ) : (
+                <ul className="divide-y divide-zinc-900">
+                  {headlines.map((h, i) => (
+                    <li key={`${h.link}-${i}`}>
+                      <a
+                        href={h.link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block px-3 py-2 hover:bg-zinc-900/60"
+                      >
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <span className="text-[10px] uppercase tracking-wider text-amber-400">{h.source}</span>
+                        </div>
+                        <div className="text-[12px] text-zinc-200 leading-snug">{h.title}</div>
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ),
+        },
+        {
+          id: "todos",
+          title: "Todos",
+          defaultLayout: { x: 6, y: 19, w: 6, h: 6 },
+          dockable: true,
+          defaultDocked: true,
+          render: () => (
+            <div className="h-full p-2 overflow-auto">
+              <TodoMenu />
+            </div>
+          ),
+        },
+        ]}
+      />
 
-        {/* Input row */}
-        <section className="col-span-12 row-span-1 flex items-center justify-center min-h-0">
+      {/* Pinned input row */}
+      <div className="shrink-0 px-2 pb-2 pt-1">
+
+          {lastEntry && Date.now() - lastEntry.at < 30000 && (
+            <div
+              data-testid="pinned-last-entry"
+              className="flex items-center gap-2 rounded-full border border-zinc-800 bg-zinc-900/60 backdrop-blur px-3 py-0.5 text-[11px] text-zinc-400"
+            >
+              <span className="text-zinc-500">Last:</span>
+              <span className="text-zinc-300">{lastEntry.label}</span>
+              <button
+                onClick={undoLast}
+                className="text-amber-400 hover:text-amber-300 uppercase tracking-wider text-[10px] border-l border-zinc-700 pl-2"
+              >
+                ↶ undo
+              </button>
+            </div>
+          )}
           <div className="w-full max-w-2xl rounded-full border border-zinc-700/80 bg-zinc-900/70 backdrop-blur pl-5 pr-1.5 py-1.5 flex items-center gap-2 shadow-lg shadow-black/30 focus-within:border-zinc-500 focus-within:bg-zinc-900/90 transition-colors">
             <span className="text-zinc-600 text-sm select-none">›</span>
             <input
@@ -745,20 +1206,67 @@ export default function Home() {
                   send();
                 }
               }}
-              placeholder={busy ? "Hermes is thinking…" : "Log a trade, meal, or weight…"}
+              placeholder={
+                busy
+                  ? (queue.length > 0
+                      ? `Hermes is thinking… (${queue.length} queued) type to add more`
+                      : "Hermes is thinking… type to queue another")
+                  : PLACEHOLDER_EXAMPLES[placeholderIdx]
+              }
               className="flex-1 bg-transparent text-base outline-none placeholder:text-zinc-500"
-              disabled={busy}
             />
+            {speechSupported && (
+              <button
+                type="button"
+                onClick={startDictation}
+                disabled={busy}
+                aria-label={listening ? "Stop listening" : "Dictate"}
+                title={listening ? "Listening… click to stop" : "Voice input"}
+                className={`rounded-full w-8 h-8 flex items-center justify-center text-sm transition-colors ${
+                  listening ? "bg-red-500/20 text-red-300 animate-pulse" : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800"
+                }`}
+              >
+                {listening ? "●" : "🎤"}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setAutoConfirm((v) => {
+                  const nv = !v;
+                  setToast(nv ? "Auto-save ON — no confirm popups" : "Auto-save OFF — confirm before saving");
+                  return nv;
+                });
+              }}
+              disabled={busy}
+              aria-label={autoConfirm ? "Disable auto-save" : "Enable auto-save"}
+              title={autoConfirm ? "Auto-save ON — click to require confirmation" : "Auto-save OFF — click to skip confirmation popups"}
+              className={`rounded-full w-8 h-8 flex items-center justify-center text-sm transition-colors ${
+                autoConfirm ? "bg-amber-500/20 text-amber-300" : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800"
+              }`}
+            >
+              ⚡
+            </button>
             <button
               onClick={send}
-              disabled={busy || !text.trim()}
-              className="rounded-full bg-blue-600 px-4 py-1.5 text-sm font-medium hover:bg-blue-500 disabled:opacity-30 disabled:hover:bg-blue-600 transition-colors"
+              disabled={!text.trim() && queue.length === 0 && !busy ? true : (!text.trim() ? true : false)}
+              className="rounded-full bg-blue-600 px-4 py-1.5 text-sm font-medium hover:bg-blue-500 disabled:opacity-30 disabled:hover:bg-blue-600 transition-colors flex items-center gap-1.5"
+              title={queue.length > 0 ? `${queue.length} queued — will run in order` : undefined}
             >
-              {busy ? "…" : "Send"}
+              {busy ? (
+                <>
+                  <span className="inline-block w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" aria-hidden />
+                  <span>{queue.length > 0 ? `Queue +${queue.length}` : "Parsing…"}</span>
+                </>
+              ) : queue.length > 0 ? (
+                `Queue +${queue.length}`
+              ) : (
+                "Send"
+              )}
             </button>
           </div>
-        </section>
-      </main>
+      </div>
+
 
       {/* Toast */}
       {toast && (
@@ -782,7 +1290,7 @@ export default function Home() {
           <div className="w-full max-w-lg rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
             <div className="mb-3 flex items-baseline justify-between">
               <h3 className="text-xl font-semibold">
-                Confirm {pending.kind === "trade" ? "trade" : pending.kind === "meal" ? "meal" : "weight"}
+                Confirm {pending.kind === "trade" ? "trade" : pending.kind === "meal" ? "meal" : pending.kind === "weight" ? "weight" : pending.kind === "todo" ? "todo" : "entry"}
               </h3>
               <span className="text-[12px] uppercase tracking-wider text-zinc-500">parsed by Hermes</span>
             </div>
@@ -835,6 +1343,23 @@ export default function Home() {
                 {pending.payload.note && (
                   <div className="flex justify-between"><span className="text-zinc-400">Note</span><span>{pending.payload.note}</span></div>
                 )}
+              </div>
+            )}
+
+            {pending.kind === "todo" && (
+              <div className="space-y-2 text-lg">
+                <div className="flex justify-between"><span className="text-zinc-400">Title</span><span className="font-medium">{pending.payload.title}</span></div>
+                {pending.payload.notes && (
+                  <div className="flex justify-between"><span className="text-zinc-400">Notes</span><span className="text-base text-zinc-300">{pending.payload.notes}</span></div>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-zinc-400">Due</span>
+                  <span>{pending.payload.due_ts ? new Date(pending.payload.due_ts).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : <span className="text-zinc-500">none</span>}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-400">Priority</span>
+                  <span>{(["none","low","medium","high"] as const)[pending.payload.priority] ?? "none"}</span>
+                </div>
               </div>
             )}
 
@@ -927,6 +1452,91 @@ export default function Home() {
         </div>
       )}
 
+      {holdingsView && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm flex items-start justify-center pt-20 px-4"
+          onClick={() => setHoldingsView(null)}
+        >
+          <div
+            className="w-full max-w-5xl max-h-[80vh] rounded-2xl border border-zinc-700 bg-zinc-900 shadow-2xl flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 shrink-0">
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-medium text-zinc-100">
+                  {holdingsView === "all" ? "All Holdings" : holdingsView === "tw_stock" ? "TW Stocks" : holdingsView === "us_stock" ? "US Stocks" : "Crypto"}
+                </h2>
+                {holdingsView !== "all" && (
+                  <button
+                    onClick={() => setHoldingsView("all")}
+                    className="text-[11px] text-zinc-500 hover:text-zinc-200 px-1.5 py-0.5 rounded border border-zinc-800 hover:border-zinc-600"
+                    title="Show all"
+                  >all</button>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setEditing("trades")}
+                  className="text-[12px] text-zinc-500 hover:text-zinc-200 px-2 py-0.5 rounded border border-zinc-800 hover:border-zinc-600"
+                  title="Edit trades"
+                >✎ trades</button>
+                <button
+                  onClick={() => setHoldingsView(null)}
+                  className="text-zinc-500 hover:text-zinc-200 text-lg leading-none px-2"
+                  aria-label="Close"
+                  title="Close"
+                >✕</button>
+              </div>
+            </div>
+            <div className={`flex-1 overflow-y-auto p-3 ${holdingsView === "all" ? "grid grid-cols-1 md:grid-cols-3 gap-3" : "flex flex-col gap-3"}`}>
+              {classGroups
+                .filter((g) => holdingsView === "all" || g.key === holdingsView)
+                .map((g) => {
+                  const rows = (portfolio?.positions ?? []).filter((p) => p.asset_type === g.key);
+                  return (
+                    <div key={g.key} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 flex flex-col min-h-0">
+                      <div className="flex items-center justify-between mb-2 shrink-0">
+                        <h3 className="text-sm font-medium text-zinc-200">{g.label === "TW" ? "TW Stocks" : g.label === "US" ? "US Stocks" : "Crypto"}</h3>
+                        <span className={`rounded-full px-2 py-0.5 text-[11px] ${g.pillTone}`}>{g.pill}</span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {rows.length === 0 && (
+                          <div className="text-[13px] text-zinc-500 py-2">No positions</div>
+                        )}
+                        {rows.map((p) => (
+                          <div key={`${p.asset_type}|${p.symbol}`} className="group flex items-center justify-between text-[13px]">
+                            <div className="min-w-0">
+                              <div className="truncate font-medium text-zinc-100">{p.symbol.replace(/\.TW$/, "")}</div>
+                              <div className="truncate text-[12px] text-zinc-500">{p.display_name}</div>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <div className="text-right whitespace-nowrap tabular-nums">
+                                <div className="text-zinc-100"><FlipNumber value={fmtMoneyFull(p.current_price, p.currency)} /></div>
+                                <div className={`text-[12px] ${colorPnl(p.change_pct_today)}`}><FlipNumber value={fmtPct(p.change_pct_today)} /></div>
+                              </div>
+                              <button
+                                onClick={() => setEditing("trades")}
+                                title={`Edit ${p.symbol} trades`}
+                                className="opacity-0 group-hover:opacity-100 transition text-[11px] px-1 py-0.5 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"
+                              >✎</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-2 pt-2 border-t border-zinc-800 flex justify-between text-[12px] shrink-0">
+                        <span className="text-zinc-500">Value</span>
+                        <span className="text-zinc-200 font-medium tabular-nums">
+                          {fmtMoney(rows.reduce((s, p) => s + (toDisplay(p.market_value_native, p.currency) ?? 0), 0), displayCcy)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
+        </div>
+      )}
+
       <EditModal
         open={editing === "trades"}
         onClose={() => setEditing(null)}
@@ -979,6 +1589,259 @@ export default function Home() {
         ]}
         onChanged={refreshAll}
       />
+
+      {/* Project editor modal */}
+      {editingProject && (
+        <ProjectEditor
+          initial={editingProject === "new" ? null : editingProject}
+          onClose={() => setEditingProject(null)}
+          onSaved={() => { setEditingProject(null); loadProjects(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Project editor (inline component) ─────────────────────────────────
+function ProjectEditor({
+  initial,
+  onClose,
+  onSaved,
+}: {
+  initial: {
+    id: number;
+    name: string;
+    description: string | null;
+    phase: string;
+    status: string;
+    current_problem: string | null;
+    next_step: string | null;
+    priority: number;
+    url: string | null;
+    archived_at: number | null;
+  } | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(initial?.name ?? "");
+  const [description, setDescription] = useState(initial?.description ?? "");
+  const [phase, setPhase] = useState(initial?.phase ?? "idea");
+  const [status, setStatus] = useState(initial?.status ?? "on_track");
+  const [currentProblem, setCurrentProblem] = useState(initial?.current_problem ?? "");
+  const [nextStep, setNextStep] = useState(initial?.next_step ?? "");
+  const [priority, setPriority] = useState<number>(initial?.priority ?? 2);
+  const [url, setUrl] = useState(initial?.url ?? "");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const save = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) { setErr("name required"); return; }
+    setSaving(true);
+    setErr(null);
+    try {
+      const body = {
+        name: trimmed,
+        description: description.trim() || null,
+        phase,
+        status,
+        current_problem: currentProblem.trim() || null,
+        next_step: nextStep.trim() || null,
+        priority,
+        url: url.trim() || null,
+      };
+      const res = initial
+        ? await fetch(`/api/projects/${initial.id}`, {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          })
+        : await fetch(`/api/projects`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          });
+      if (!res.ok) throw new Error(await res.text());
+      onSaved();
+    } catch (e) {
+      setErr(String(e));
+      setSaving(false);
+    }
+  };
+
+  const archive = async () => {
+    if (!initial) return;
+    if (!confirm(`Archive "${initial.name}"? (soft-archive, not deleted)`)) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/projects/${initial.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(await res.text());
+      onSaved();
+    } catch (e) {
+      setErr(String(e));
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-lg bg-zinc-950 border border-zinc-800 rounded-xl shadow-2xl flex flex-col max-h-[90vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 shrink-0">
+          <h3 className="text-sm font-medium text-zinc-100">
+            {initial ? "Edit project" : "New project"}
+          </h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-zinc-500 hover:text-zinc-200 text-lg leading-none px-1"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase tracking-widest text-zinc-500">Name</span>
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+              placeholder="CrossView, lifemaxxing-dashboard, …"
+            />
+          </label>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-widest text-zinc-500">Phase</span>
+              <select
+                value={phase}
+                onChange={(e) => setPhase(e.target.value)}
+                className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+              >
+                <option value="idea">idea</option>
+                <option value="planning">planning</option>
+                <option value="building">building</option>
+                <option value="shipping">shipping</option>
+                <option value="maintaining">maintaining</option>
+                <option value="paused">paused</option>
+                <option value="done">done</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-widest text-zinc-500">Status</span>
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+                className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+              >
+                <option value="on_track">on track</option>
+                <option value="at_risk">at risk</option>
+                <option value="blocked">blocked</option>
+                <option value="done">done</option>
+              </select>
+            </label>
+          </div>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase tracking-widest text-zinc-500">
+              Current problem / blocker
+            </span>
+            <textarea
+              value={currentProblem}
+              onChange={(e) => setCurrentProblem(e.target.value)}
+              rows={3}
+              className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 resize-none"
+              placeholder="What's stuck right now?"
+            />
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase tracking-widest text-zinc-500">Next step</span>
+            <textarea
+              value={nextStep}
+              onChange={(e) => setNextStep(e.target.value)}
+              rows={2}
+              className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 resize-none"
+              placeholder="The next concrete action"
+            />
+          </label>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-widest text-zinc-500">Priority</span>
+              <select
+                value={priority}
+                onChange={(e) => setPriority(parseInt(e.target.value, 10))}
+                className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+              >
+                <option value={1}>★ low</option>
+                <option value={2}>★★ med</option>
+                <option value={3}>★★★ high</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-widest text-zinc-500">URL</span>
+              <input
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600"
+                placeholder="https://github.com/…"
+              />
+            </label>
+          </div>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase tracking-widest text-zinc-500">Notes</span>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={3}
+              className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 resize-none"
+              placeholder="What this project is about, scope, goals…"
+            />
+          </label>
+
+          {err && <div className="text-rose-400 text-xs">{err}</div>}
+        </div>
+
+        <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-800 shrink-0">
+          {initial ? (
+            <button
+              type="button"
+              onClick={archive}
+              disabled={saving}
+              className="text-[11px] text-zinc-500 hover:text-rose-400 disabled:opacity-50"
+            >
+              archive
+            </button>
+          ) : <span />}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={saving}
+              className="text-xs text-zinc-400 hover:text-zinc-100 px-3 py-1.5 rounded border border-zinc-800 hover:border-zinc-600"
+            >
+              cancel
+            </button>
+            <button
+              type="button"
+              onClick={save}
+              disabled={saving}
+              className="text-xs text-zinc-100 bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 rounded border border-zinc-700 disabled:opacity-50"
+            >
+              {saving ? "saving…" : initial ? "save" : "create"}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
