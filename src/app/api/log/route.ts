@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import db from "@/lib/db";
 import { hermesCall, extractJson } from "@/lib/hermes";
-import { ROUTER_PROMPT, TRADE_PARSE_PROMPT, MEAL_RESEARCH_PROMPT, WEIGHT_PARSE_PROMPT, BATCH_PARSE_PROMPT, TODO_PARSE_PROMPT } from "@/lib/prompts";
+import { ROUTER_PROMPT, TRADE_PARSE_PROMPT, MEAL_RESEARCH_PROMPT, WEIGHT_PARSE_PROMPT, BATCH_PARSE_PROMPT, TODO_PARSE_PROMPT, SUBSCRIPTION_PARSE_PROMPT, HABIT_PARSE_PROMPT, NETWORTH_PARSE_PROMPT } from "@/lib/prompts";
 import { matchKnownFoods, hitToMealItem, type KnownFoodHit } from "@/lib/known-foods";
 
 // SECURITY: this endpoint shells out to the local `hermes` CLI with --yolo --ignore-rules,
@@ -10,7 +10,7 @@ import { matchKnownFoods, hitToMealItem, type KnownFoodHit } from "@/lib/known-f
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type RouterOut = { intent: "trade" | "meal" | "weight" | "todo" | "batch" | "question" | "unknown"; reason: string };
+type RouterOut = { intent: "trade" | "meal" | "weight" | "todo" | "subscription" | "habit" | "networth" | "batch" | "question" | "unknown"; reason: string };
 type TradeOut = {
   asset_type: "tw_stock" | "us_stock" | "crypto";
   symbol: string;
@@ -33,6 +33,69 @@ type MealOut = {
 };
 
 type TodoPayload = { title: string; notes: string; due_ts: number | null; priority: number };
+type SubscriptionPayload = { name: string; amount: number; currency: "TWD" | "USD"; cycle: "weekly" | "monthly" | "yearly"; next_charge_ts: number | null; url: string; notes: string };
+type HabitPayload = { name: string; status: "done" | "skip" };
+type NetworthPayload = { kind: "cash" | "liability"; name: string; balance: number; currency: "TWD" | "USD"; account_kind: string };
+
+const CYCLE_MULT: Record<string, number> = { weekly: 52 / 12, monthly: 1, yearly: 1 / 12 };
+
+function subscriptionPreview(p: SubscriptionPayload): string {
+  const sym = p.currency === "USD" ? "$" : "NT$";
+  const cycleShort = p.cycle === "yearly" ? "/yr" : p.cycle === "weekly" ? "/wk" : "/mo";
+  const monthly = p.amount * (CYCLE_MULT[p.cycle] ?? 1);
+  const monthlyStr = p.cycle === "monthly" ? "" : ` · ≈${sym}${Math.round(monthly)}/mo`;
+  return `${p.name} ${sym}${p.amount}${cycleShort}${monthlyStr}`;
+}
+
+function networthPreview(p: NetworthPayload): string {
+  const sym = p.currency === "USD" ? "$" : "NT$";
+  const label = p.kind === "liability" ? "owe" : "have";
+  return `${p.name}: ${label} ${sym}${p.balance.toLocaleString()}`;
+}
+
+// Expand "1.2m", "250k", "25萬" style shorthands to a plain number. Returns null if unparseable.
+function parseMoneyShorthand(raw: string): number | null {
+  const s = raw.replace(/[, ]/g, "").toLowerCase();
+  let m = s.match(/^(-?\d+(?:\.\d+)?)(m|k|萬|万)?$/);
+  if (m) {
+    let n = parseFloat(m[1]);
+    if (m[2] === "m") n *= 1_000_000;
+    else if (m[2] === "k") n *= 1_000;
+    else if (m[2] === "萬" || m[2] === "万") n *= 10_000;
+    return n;
+  }
+  return null;
+}
+
+// Lexical subscription parser for "<name> <amount>[/cycle]" e.g. "netflix 390/mo",
+// "spotify 1990 yearly", "icloud NT$30 monthly". Returns null if no amount found.
+function parseFastSubscription(body: string): SubscriptionPayload | null {
+  let s = body.trim();
+  let cycle: "weekly" | "monthly" | "yearly" = "monthly";
+  // cycle words / suffixes
+  if (/(\/?\s*(yr|year|yearly|annually|annual|年)|每年|年費)/i.test(s)) cycle = "yearly";
+  else if (/(\/?\s*(wk|week|weekly|週|周)|每週|每周)/i.test(s)) cycle = "weekly";
+  else if (/(\/?\s*(mo|month|monthly|月)|每月|月費)/i.test(s)) cycle = "monthly";
+  // currency
+  let currency: "TWD" | "USD" = "TWD";
+  if (/(\bUSD\b|\$|美金|美元)/i.test(s)) currency = "USD";
+  if (/(NT\$|NTD|台幣|新台幣)/i.test(s)) currency = "TWD";
+  // amount: first number (optionally with currency symbol / k-m suffix)
+  const am = s.match(/(?:NT\$|NTD|US\$|\$|￥|¥)?\s*(\d[\d,]*(?:\.\d+)?)(k|m|萬|万)?/i);
+  if (!am) return null;
+  const amount = parseMoneyShorthand(am[1] + (am[2] || ""));
+  if (amount == null || amount <= 0) return null;
+  // name = body with the matched amount + cycle/currency tokens stripped
+  let name = s
+    .replace(am[0], " ")
+    .replace(/(\/?\s*(yr|year|yearly|annually|annual|mo|month|monthly|wk|week|weekly))/gi, " ")
+    .replace(/(每年|年費|每月|月費|每週|每周|年|月|週|周)/g, " ")
+    .replace(/(NT\$|NTD|US\$|USD|\$|美金|美元|台幣|新台幣|￥|¥)/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!name) name = "subscription";
+  return { name, amount, currency, cycle, next_charge_ts: null, url: "", notes: "" };
+}
 
 // Resolve loose date words to a Date. Returns null if unparseable.
 function resolveTodoDate(token: string): Date | null {
@@ -189,6 +252,49 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Fast path: habit check-in ("did X", "done X", "skipped X", "完成 X", "做了 X", "沒做 X").
+  // Zero LLM calls — this is the highest-frequency, lowest-ambiguity intent.
+  {
+    const m = text.match(/^\s*(did|done|finished|completed|skip|skipped|missed|完成|做了|沒做|没做|跳過|跳过)\s+(.+?)\s*$/i);
+    if (m) {
+      const verb = m[1].toLowerCase();
+      const isSkip = /^(skip|skipped|missed|沒做|没做|跳過|跳过)$/i.test(verb);
+      let name = m[2].trim()
+        .replace(/\s+(today|now|这次|這次)\s*$/i, "")
+        .replace(/^(my|the)\s+/i, "")
+        .trim();
+      // Avoid hijacking meal/weight phrasing like "did eat 2 eggs" or numeric bodies.
+      if (name && !/^\d/.test(name) && name.length <= 40) {
+        const payload: HabitPayload = { name: name.toLowerCase(), status: isSkip ? "skip" : "done" };
+        return NextResponse.json({
+          kind: "habit",
+          preview: `${isSkip ? "⊘ skip" : "✓ done"}: ${payload.name}`,
+          payload,
+          text,
+          needsConfirm: true,
+        });
+      }
+    }
+  }
+
+  // Fast path: subscription with explicit prefix ("sub:", "subscription:", "訂閱:").
+  // The amount + cycle are parsed lexically. Falls through to the LLM intent on a miss.
+  {
+    const subPrefix = text.match(/^\s*(?:sub|subscription|訂閱)\s*[:：]\s*(.+)$/i);
+    if (subPrefix) {
+      const fast = parseFastSubscription(subPrefix[1].trim());
+      if (fast) {
+        return NextResponse.json({
+          kind: "subscription",
+          preview: subscriptionPreview(fast),
+          payload: fast,
+          text,
+          needsConfirm: true,
+        });
+      }
+    }
+  }
+
   // Fast path: if the entire input matches the local known-foods table, skip both
   // the router and the meal LLM call. This is by far the most common case and
   // makes logging a familiar SKU effectively instant.
@@ -313,6 +419,83 @@ export async function POST(req: NextRequest) {
       text,
       needsConfirm: true,
     });
+  }
+
+  if (routed.intent === "subscription") {
+    let parsed: { name: string; amount: number; currency: string; cycle: string; next_charge_iso: string; url: string; notes: string };
+    try {
+      const nowIso = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      const raw = await hermesCall(SUBSCRIPTION_PARSE_PROMPT(text, nowIso), { timeoutMs: 60_000 });
+      parsed = extractJson(raw);
+    } catch (e) {
+      // LLM failed — try the lexical fallback before giving up.
+      const fb = parseFastSubscription(text);
+      if (!fb) {
+        return NextResponse.json(
+          { error: `subscription parse failed: ${(e as Error).message}`, intent: routed.intent },
+          { status: 500 },
+        );
+      }
+      return NextResponse.json({ kind: "subscription", preview: subscriptionPreview(fb), payload: fb, text, needsConfirm: true });
+    }
+    const cycle = ["weekly", "monthly", "yearly"].includes(parsed.cycle) ? (parsed.cycle as SubscriptionPayload["cycle"]) : "monthly";
+    const next_charge_ts = parsed.next_charge_iso ? new Date(parsed.next_charge_iso).getTime() || null : null;
+    const payload: SubscriptionPayload = {
+      name: (parsed.name || text).slice(0, 80),
+      amount: Math.max(0, Number(parsed.amount) || 0),
+      currency: parsed.currency === "USD" ? "USD" : "TWD",
+      cycle,
+      next_charge_ts,
+      url: parsed.url || "",
+      notes: parsed.notes || "",
+    };
+    return NextResponse.json({ kind: "subscription", preview: subscriptionPreview(payload), payload, text, needsConfirm: true });
+  }
+
+  if (routed.intent === "habit") {
+    let parsed: { name: string; status: string };
+    try {
+      const raw = await hermesCall(HABIT_PARSE_PROMPT(text), { timeoutMs: 45_000 });
+      parsed = extractJson(raw);
+    } catch (e) {
+      return NextResponse.json(
+        { error: `habit parse failed: ${(e as Error).message}`, intent: routed.intent },
+        { status: 500 },
+      );
+    }
+    const payload: HabitPayload = {
+      name: (parsed.name || text).toString().toLowerCase().slice(0, 40).trim(),
+      status: parsed.status === "skip" ? "skip" : "done",
+    };
+    return NextResponse.json({
+      kind: "habit",
+      preview: `${payload.status === "skip" ? "⊘ skip" : "✓ done"}: ${payload.name}`,
+      payload,
+      text,
+      needsConfirm: true,
+    });
+  }
+
+  if (routed.intent === "networth") {
+    let parsed: { kind: string; name: string; balance: number; currency: string; account_kind: string };
+    try {
+      const raw = await hermesCall(NETWORTH_PARSE_PROMPT(text), { timeoutMs: 45_000 });
+      parsed = extractJson(raw);
+    } catch (e) {
+      return NextResponse.json(
+        { error: `networth parse failed: ${(e as Error).message}`, intent: routed.intent },
+        { status: 500 },
+      );
+    }
+    const kind: "cash" | "liability" = parsed.kind === "liability" ? "liability" : "cash";
+    const payload: NetworthPayload = {
+      kind,
+      name: (parsed.name || text).slice(0, 80),
+      balance: Math.abs(Number(parsed.balance) || 0),
+      currency: parsed.currency === "USD" ? "USD" : "TWD",
+      account_kind: parsed.account_kind || (kind === "liability" ? "loan" : "cash"),
+    };
+    return NextResponse.json({ kind: "networth", preview: networthPreview(payload), payload, text, needsConfirm: true });
   }
 
   if (routed.intent === "weight") {

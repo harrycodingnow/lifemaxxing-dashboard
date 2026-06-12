@@ -44,18 +44,39 @@ Rules:
 - "NT$"/"NTD"/台幣/塊 => TWD. "$"/USD => USD. Crypto defaults to USD.
 - Each meal is ONE eating occasion. If the user lists two clearly separate meals (e.g. "breakfast: X. lunch: Y."), emit two meal entries.
 - Each trade is ONE buy or sell. Two trades in one sentence => two entries.
-- For meals: estimate kcal + macros from your nutrition knowledge (USDA / standard databases). Round to whole numbers. Include 1-3 source names in "sources".
+- For meals: estimate kcal + macros from your nutrition knowledge. For **branded** items only (7-11/711, 全家, 萊爾富, Louisa, Starbucks, McDonald's, 摩斯, etc. — explicit brand+product like "711 - 增肌蛋白餐"), do AT MOST ONE web_search per branded item with query "<brand> <product> 熱量"; take the first credible number and move on. Skip web_search for generic unbranded foods (白飯, 蛋). Total web_search calls <= number of branded items. Put real URLs in "sources" when used. Round to whole numbers.
 - Use kg for weight (convert lb*0.453592 if needed).
 - Order entries in the order they appear in the message.
 - Never invent fields. Never wrap output in markdown fences.
 
 User message:
 """X"""",
-  "meal": "You are a nutrition research assistant. Estimate calories and macros for the food described below, using your knowledge of standard USDA / well-known nutrition databases. The user may write English or Chinese.
+  "habit": "Parse this habit check-in into strict JSON. The user may write English or Chinese.
 
-For each distinct food item, estimate: portion (with units), calories (kcal), protein (g), carbs (g), fat (g). Then sum totals.
+Output ONLY one JSON object on the LAST line, no markdown fences, schema:
+{
+  "name": "<short habit name, e.g. meditation, gym, reading, 跑步>",
+  "status": "done" | "skip"
+}
 
-Also list 1-3 source references (URLs or database names like "USDA FoodData Central", "MyFitnessPal", "Cronometer", brand nutrition label) that justify your numbers.
+Rules:
+- "did X", "done X", "finished X", "完成 X", "做了 X" -> status "done", name = X.
+- "skipped X", "didn't do X", "missed X", "沒做 X", "跳過 X" -> status "skip", name = X.
+- Normalize the name to a short lowercase noun/verb phrase (strip "my", "the", "today", "今天").
+- Never invent fields. Never wrap output in markdown fences.
+
+User entry:
+"""X"""",
+  "meal": "You are a nutrition research assistant. Estimate calories and macros for the food described below. The user may write English or Chinese.
+
+SPEED RULES (this runs in a user-facing log flow — be FAST):
+  - For each item, do AT MOST ONE web_search, and only if the item has an explicit brand (7-11/711, 全家/FamilyMart, 萊爾富, Louisa/路易莎, Starbucks/星巴克, McDonald's/麥當勞, 摩斯, etc.) or a clear packaged SKU name. Skip search entirely for generic foods (白飯, 蛋, 雞胸肉 with no brand) — use your nutrition knowledge.
+  - Query format: \`<brand> <product> 熱量\` (one search, take the first credible result with a number — official brand page, 7-11/全家 product page, or blog citing the label). Don't keep searching for a "better" source.
+  - Hard ceiling: total web_search calls <= number of branded items, never more.
+
+For each distinct food item, return: portion (with units), calories (kcal), protein (g), carbs (g), fat (g). Then sum totals.
+
+In "sources", list the actual URLs you found via web_search (or the database name for generic fallbacks). If you used web_search, the source MUST be a real URL you read, not "USDA FoodData Central" hand-waved.
 
 Output ONLY one JSON object on the LAST line, no markdown fences, this schema:
 {
@@ -73,20 +94,86 @@ Be realistic. Round to whole numbers. If a portion is ambiguous, assume a typica
 
 User meal entry:
 """X"""",
+  "networth": "Parse this net-worth balance entry into strict JSON. The user may write English or Chinese. It is EITHER a cash/asset balance OR a debt/liability.
+
+Output ONLY one JSON object on the LAST line, no markdown fences, schema:
+{
+  "kind": "cash" | "liability",
+  "name": "<account or debt name, e.g. Cathay, Bank of America, Student loan, Visa card>",
+  "balance": <number, absolute value (positive), in native currency>,
+  "currency": "TWD" | "USD",
+  "account_kind": "<for cash: cash|bank|brokerage_cash|other ; for liability: loan|credit_card|mortgage|other>"
+}
+
+Rules:
+- Words loan / debt / owe / credit card / mortgage / 貸款 / 欠 / 卡債 / 房貸 / 車貸, OR a negative number -> kind "liability".
+- Words cash / bank / savings / balance / 現金 / 存款 / 餘額, OR a plain positive number -> kind "cash".
+- "balance" must be the ABSOLUTE value (always positive) even if the user wrote a minus sign.
+- "1.2m"/"1.2M" = 1200000, "250k"/"25萬" -> expand to the full number.
+- "NT$"/台幣/元/塊 or no hint -> TWD (user is in Taiwan). "$"/USD -> USD.
+- account_kind: 信用卡/credit card -> credit_card; 房貸/mortgage -> mortgage; 車貸/student/personal loan -> loan; 證券/brokerage -> brokerage_cash; 銀行/bank/savings -> bank; otherwise cash (for assets) or other.
+- Never invent fields. Never wrap output in markdown fences.
+
+User entry:
+"""X"""",
+  "news_summary": "You are a sharp, neutral news editor. Below is a JSON array of current headlines (each with title, source, and category) pulled from the user's dashboard news feed.
+
+Write a TIGHT briefing in PLAIN TEXT (no markdown headers, no code fences). Structure:
+1. One opening line capturing the day's overall theme (what's dominating the news).
+2. 3-5 bullet lines (use "•"), each grouping related headlines into a single insight. Lead the bullet with the category in brackets, e.g. "• [Markets] ...", "• [Taiwan] ...". Synthesize across sources — don't just restate one headline.
+
+Rules:
+- Use ONLY information present in the headlines. Do NOT invent facts, numbers, outcomes, or details not in the titles. Headlines are terse, so stay high-level and attribute uncertainty ("reportedly", "amid") rather than fabricating specifics.
+- Prioritize the most consequential stories; it's fine to ignore minor ones.
+- Keep it under 130 words. Crisp and informative, no editorializing or hot takes.
+- Output the briefing text directly — no preamble like "Here is your summary".
+
+Headlines JSON:
+"""
+X
+"""",
   "router": "You are a strict JSON router for a personal finance + nutrition + body-metrics logger.
 
 Classify the user message into exactly ONE intent:
   - "trade"     : a SINGLE stock or crypto buy/sell
   - "meal"      : a SINGLE meal/snack/drink (one eating occasion, possibly with multiple items)
   - "weight"    : a body-weight measurement (e.g. "weight 72.5kg", "今天 73.2 公斤")
+  - "todo"      : a task / reminder / to-do item the user wants to remember and do later (e.g. "remind me to call mom tomorrow at 3pm", "todo: pay rent", "明天記得繳水費", "task: refactor parser this week"). Triggers: "remind me to", "remember to", "todo", "task", "提醒我", "記得", "待辦".
+  - "subscription" : a RECURRING paid subscription the user wants to track (e.g. "netflix 390/mo", "spotify yearly 1990", "track my icloud subscription 30 twd monthly", "訂閱 youtube premium 179 每月"). Triggers: a service name + a recurring price + a cycle word (monthly/月/mo, yearly/年/yr, weekly/週). NOT a one-off purchase.
+  - "habit"     : marking a daily HABIT done or skipped (e.g. "did meditation", "skipped gym", "完成 跑步", "做了冥想", "didn't do reading today"). Triggers: "did X", "done X", "skipped X", "完成", "做了", "沒做". This is about a repeatable daily routine, NOT a one-off task (todo) and NOT a meal.
+  - "networth"  : logging a CASH balance or a DEBT/liability for net-worth tracking (e.g. "cathay cash 250000", "bank balance 1.2m", "student loan -50000", "credit card debt 30000", "國泰現金 250000", "車貸 -300000"). Cash = positive asset; a loan/debt/credit-card is a liability (often written with a minus sign or the words loan/debt/貸款/欠).
   - "batch"     : MULTIPLE separate log entries in one message (e.g. two distinct trades, OR a trade + a meal, OR breakfast + lunch as separate meals). Use this when the user is clearly logging more than one independent thing.
   - "question"  : the user is asking a question, not logging anything
   - "unknown"   : cannot determine
 
 Respond with ONLY a single JSON object on the LAST line, no prose, no markdown fences:
-{"intent":"trade|meal|weight|batch|question|unknown","reason":"<one short sentence>"}
+{"intent":"trade|meal|weight|todo|subscription|habit|networth|batch|question|unknown","reason":"<one short sentence>"}
 
 User message:
+"""X"""",
+  "subscription": "Parse this recurring subscription into strict JSON. The user may write English or Chinese.
+
+Current local datetime (for computing the next charge date): 2026-06-01T12:00
+
+Output ONLY one JSON object on the LAST line, no markdown fences, schema:
+{
+  "name": "<service name, e.g. Netflix, Spotify, iCloud, YouTube Premium>",
+  "amount": <number, price per billing cycle in native currency>,
+  "currency": "TWD" | "USD",
+  "cycle": "weekly" | "monthly" | "yearly",
+  "next_charge_iso": "<ISO 8601 local date like 2026-07-01 OR empty string if unknown>",
+  "url": "<manage/cancel URL or empty string>",
+  "notes": "<short note or empty string>"
+}
+
+Rules:
+- "/mo", "per month", "每月", "monthly", "月費" -> cycle "monthly". "/yr", "yearly", "annually", "每年", "年費" -> "yearly". "weekly", "每週" -> "weekly".
+- "NT$"/"NTD"/台幣/塊/元 with no other hint -> TWD. "$"/USD -> USD. Default to TWD if ambiguous (user is in Taiwan).
+- If the user gives a renewal/billing day (e.g. "renews on the 1st", "next charge July 1") set next_charge_iso to that date; otherwise leave it "".
+- Strip filler like "track my", "訂閱", "subscription" from the name.
+- Never invent fields. Never wrap output in markdown fences.
+
+User entry:
 """X"""",
   "trade": "Parse this trade log entry into strict JSON. The user may write in English or Chinese.
 
@@ -111,6 +198,23 @@ Rules:
 
 User entry:
 """X"""",
+  "weekly_review": "You are a concise personal-life-review assistant. Below is a JSON digest of the user's last week (trades, nutrition, weight, todos, habits) from their lifemaxxing dashboard.
+
+Write a short, motivating weekly review in PLAIN TEXT (no markdown headers, no code fences). Structure:
+1. One opening line summarizing the week's vibe.
+2. 3-5 bullet lines (use "•") highlighting concrete wins and numbers (e.g. "• Logged meals 6/7 days, avg 2,100 kcal / 165g protein", "• Completed 4 todos", "• Weight down 0.4kg").
+3. One honest "watch out" line if something slipped (missed habit days, no weigh-ins, lots of open todos).
+4. One forward-looking line for next week.
+
+Rules:
+- Use ONLY the numbers in the digest. Do not invent data. If a section is empty (zero entries), either omit it or gently note the gap.
+- Keep it under 140 words. Warm but not cheesy. The user is a busy CS student building startups.
+- Output the review text directly — no preamble like "Here is your review".
+
+Weekly digest JSON:
+"""
+X
+"""",
   "weight": "Parse this body-weight log entry into strict JSON. The user may write English or Chinese, in kg or lb.
 
 Output ONLY one JSON object on the LAST line, no markdown fences, schema:
@@ -128,5 +232,30 @@ Rules:
 
 User entry:
 """X"""",
+  "widget_gen": "You are a front-end engineer generating a SINGLE self-contained dashboard widget as one HTML document. The user described what they want in plain language. Build it.
+
+User request:
+"""
+X
+"""
+
+Output requirements — return ONE fenced \`\`\`html code block containing a COMPLETE document:
+- Start with <!doctype html>, include <html><head><meta charset> + <style> and <body> with inline <script> as needed. Everything inline — NO external CSS/JS files, NO frameworks, NO CDN <script src> (it runs in a locked-down sandbox with no allow-same-origin, so external scripts and storage are blocked).
+- It renders inside a small dark dashboard tile (assume ~320x360px, but make it responsive to any size). Match this dark theme: transparent/near-black background (use \`background: transparent\` on body so the tile shows through), text color #e4e4e7 (zinc-200), muted #a1a1aa, accents are fine. Use system-ui font, 13-14px base. Compact padding (~10px).
+- Make it genuinely functional and self-contained. Pure HTML/CSS/JS only. Examples: a pomodoro timer, a countdown to a date, a unit/currency converter with hardcoded rates, a calculator, a markdown scratchpad, a habit dots grid, a breathing-exercise animation, a dice/coin randomizer, a tip splitter, a world-clock for fixed cities computed from the browser clock.
+- DATA/NETWORK: You generally have NO network (sandbox blocks it). Do NOT fetch external APIs unless the user explicitly names a known keyless one; default to computing everything client-side from Date.now() and hardcoded constants. If the user asks for live data you can't get, build the UI and use clearly-labeled sample/placeholder values rather than failing.
+- Do NOT use localStorage/sessionStorage/cookies (blocked by the sandbox — they throw). Keep state in JS variables only.
+- Keep it lightweight and instant. No build step. Must work offline in an <iframe srcdoc> with sandbox="allow-scripts".
+
+Also pick a SHORT title (2-3 words) for the tile header.
+
+Return EXACTLY this shape — a fenced json block with the title, then a fenced html block with the document:
+\`\`\`json
+{"title": "Pomodoro"}
+\`\`\`
+\`\`\`html
+<!doctype html>
+<html>...full document...</html>
+\`\`\`",
 }
 `;

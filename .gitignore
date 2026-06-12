@@ -7,6 +7,7 @@ dist
 data/*.db
 data/*.db-wal
 data/*.db-shm
+data/calendar-cache.json
 .env
 .env.local
 .env.*.local
@@ -15,3 +16,7 @@ data/*.db-shm
 next-env.d.ts
 tsconfig.tsbuildinfo
 .lifemaxx.pid
+
+# Compiled EventKit calendar helper (build with: npm run calendar:build)
+scripts/caldump
+scripts/caldump.app/

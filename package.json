@@ -8,7 +8,10 @@
     "start": "next start",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "calendar:build": "bash scripts/build-caldump.sh",
+    "calendar:grant": "./scripts/caldump.app/Contents/MacOS/caldump 5 >/dev/null && echo '✓ Calendar access granted' || echo 'Approve the macOS Calendar prompt, then re-run'",
+    "calendar:refresh": "node scripts/refresh-calendar.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",

@@ -15,7 +15,17 @@ import FlipNumber from "@/components/FlipNumber";
 import EditModal, { type FieldDef } from "@/components/EditModal";
 import { Marquee, type MarqueeItem } from "@/components/Marquee";
 import TodoMenu from "@/components/TodoMenu";
+import HabitPanel from "@/components/HabitPanel";
+import SubscriptionPanel from "@/components/SubscriptionPanel";
+import NetWorthPanel from "@/components/NetWorthPanel";
+import CalendarPanel from "@/components/CalendarPanel";
+import SpotifyPanel from "@/components/SpotifyPanel";
+import WeatherPanel from "@/components/WeatherPanel";
+import CustomWidget from "@/components/CustomWidget";
+import WidgetCreator from "@/components/WidgetCreator";
+import WeeklyReview from "@/components/WeeklyReview";
 import { DashboardLayout, type WidgetSpec } from "@/components/DashboardLayout";
+import { isDemoMode, setDemoMode, installDemoFetch, DEMO_EVENT } from "@/lib/demo-data";
 
 type Position = {
   asset_type: string;
@@ -94,6 +104,19 @@ function fmtPct(n: number | null | undefined) {
 function colorPnl(n: number | null | undefined) {
   if (n == null) return "text-zinc-400";
   return n >= 0 ? "text-emerald-400" : "text-rose-400";
+}
+
+// Per-category tone for news labels (chips, marquee, panel).
+const NEWS_CATEGORY_TONE: Record<string, string> = {
+  Markets: "text-emerald-400",
+  Business: "text-teal-400",
+  World: "text-sky-400",
+  Politics: "text-rose-400",
+  Tech: "text-violet-400",
+  Taiwan: "text-amber-400",
+};
+function newsTone(category?: string) {
+  return (category && NEWS_CATEGORY_TONE[category]) || "text-zinc-400";
 }
 
 export default function Home() {
@@ -176,10 +199,17 @@ export default function Home() {
     | { kind: "meal"; preview: string; payload: { meal_type: string; items: MealItem[]; totals: { calories: number; protein_g: number; carbs_g: number; fat_g: number }; sources: string[]; confidence?: string; notes?: string }; text: string }
     | { kind: "weight"; preview: string; payload: { weight_kg: number; note: string }; text: string }
     | { kind: "todo"; preview: string; payload: { title: string; notes: string; due_ts: number | null; priority: number }; text: string }
-    | { kind: "batch"; preview: string; payload: { entries: Array<{ kind: "trade" | "meal" | "weight" | "todo"; payload: any; raw?: string }> }; text: string };
+    | { kind: "subscription"; preview: string; payload: { name: string; amount: number; currency: "TWD" | "USD"; cycle: "weekly" | "monthly" | "yearly"; next_charge_ts: number | null; url: string; notes: string }; text: string }
+    | { kind: "habit"; preview: string; payload: { name: string; status: "done" | "skip" }; text: string }
+    | { kind: "networth"; preview: string; payload: { kind: "cash" | "liability"; name: string; balance: number; currency: "TWD" | "USD"; account_kind: string }; text: string }
+    | { kind: "batch"; preview: string; payload: { entries: Array<{ kind: "trade" | "meal" | "weight" | "todo" | "subscription" | "habit" | "networth"; payload: any; raw?: string }> }; text: string };
   const [pending, setPending] = useState<Pending | null>(null);
   const [committing, setCommitting] = useState(false);
   const [displayCcy, setDisplayCcy] = useState<"TWD" | "USD">("TWD");
+  // Demo/mock-data mode (for screenshots). Install the fetch interceptor
+  // synchronously on first render so the very first refreshAll already sees it.
+  const [demoMode, setDemoModeState] = useState(false);
+  if (typeof window !== "undefined") installDemoFetch();
 
   type Stats = {
     cashflow: { buys_usd: number; sells_usd: number; net_usd: number; trade_count: number; fx_used: number };
@@ -188,6 +218,13 @@ export default function Home() {
   };
   const [stats, setStats] = useState<Stats | null>(null);
   const [cashWindow, setCashWindow] = useState(1);
+  type NetWorthSummary = {
+    portfolio_ok: boolean;
+    components: { portfolio: { usd: number; twd: number }; cash: { usd: number; twd: number }; liabilities: { usd: number; twd: number } };
+    net_worth: { usd: number; twd: number };
+    counts: { cash: number; liabilities: number };
+  };
+  const [networth, setNetworth] = useState<NetWorthSummary | null>(null);
   const todayStr = () => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -202,9 +239,37 @@ export default function Home() {
     setNutritionDay(next);
   };
   const isToday = nutritionDay === todayStr();
-  type Headline = { title: string; link: string; source: string };
+  type Headline = { title: string; link: string; source: string; category?: string };
   const [headlines, setHeadlines] = useState<Headline[]>([]);
+  const [newsCategory, setNewsCategory] = useState<string>("All");
   const [newsOpen, setNewsOpen] = useState(false);
+  const [newsSummary, setNewsSummary] = useState<string | null>(null);
+  const [newsSummaryLoading, setNewsSummaryLoading] = useState(false);
+  const [newsSummaryOpen, setNewsSummaryOpen] = useState(false);
+  type CalEventLite = { calendar: string; title: string; start_ts: number | null; all_day: boolean; multi_day: boolean };
+  const [nextEvent, setNextEvent] = useState<CalEventLite | null>(null);
+  type WeatherLite = { location: string; current: { temp: number; emoji: string; label: string } } | null;
+  const [weather, setWeather] = useState<WeatherLite>(null);
+  type CustomWidgetRow = { id: number; title: string; html: string; w: number; h: number };
+  const [customWidgets, setCustomWidgets] = useState<CustomWidgetRow[]>([]);
+  const loadCustomWidgets = useCallback(async () => {
+    try {
+      const r = await fetch("/api/widgets", { cache: "no-store" });
+      const j = await r.json();
+      if (Array.isArray(j?.widgets)) setCustomWidgets(j.widgets);
+    } catch {
+      /* keep last */
+    }
+  }, []);
+  const deleteCustomWidget = useCallback(async (id: number) => {
+    setCustomWidgets((cur) => cur.filter((w) => w.id !== id)); // optimistic
+    try {
+      await fetch(`/api/widgets/${id}`, { method: "DELETE" });
+    } catch {
+      loadCustomWidgets(); // re-sync on failure
+    }
+  }, [loadCustomWidgets]);
+  useEffect(() => { loadCustomWidgets(); }, [loadCustomWidgets]);
   type LastEntry = { kind: "trade" | "meal" | "weight"; id: number; label: string; at: number };
   const [lastEntry, setLastEntry] = useState<LastEntry | null>(null);
   const [listening, setListening] = useState(false);
@@ -216,14 +281,33 @@ export default function Home() {
   useEffect(() => {
     if (typeof window !== "undefined") window.localStorage.setItem("autoConfirm", autoConfirm ? "1" : "0");
   }, [autoConfirm]);
+  // Demo mode: read persisted flag on mount, and re-render + re-fetch on flip.
+  useEffect(() => {
+    setDemoModeState(isDemoMode());
+    const onChange = () => {
+      setDemoModeState(isDemoMode());
+      refreshAllRef.current?.();
+      // Also refresh the headline marquee so the demo looks complete.
+      fetch("/api/headlines")
+        .then((r) => r.json())
+        .then((j) => Array.isArray(j?.headlines) && setHeadlines(j.headlines))
+        .catch(() => {});
+    };
+    window.addEventListener(DEMO_EVENT, onChange);
+    return () => window.removeEventListener(DEMO_EVENT, onChange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [placeholderIdx, setPlaceholderIdx] = useState(0);
   const PLACEHOLDER_EXAMPLES = [
-    "Log a trade, meal, weight, or todo…",
+    "Log a trade, meal, weight, todo, habit…",
     "bought 5 NVDA @ 880",
     "had a louisa shake + bagel",
     "72.3kg",
     "todo: pay rent @tomorrow !high",
-    "remind me to call mom tomorrow 3pm",
+    "did meditation",
+    "skipped gym",
+    "netflix 390/mo",
+    "cathay cash 250000",
     "sold 0.01 BTC @ 95000",
   ];
 
@@ -237,19 +321,45 @@ export default function Home() {
 
   const refreshAll = useCallback(async () => {
     const tz = new Date().getTimezoneOffset(); // minutes east of UTC, negated
-    const [p, n, w, d, s] = await Promise.all([
+    const [p, n, w, d, s, nw] = await Promise.all([
       fetch("/api/portfolio").then((r) => r.json()),
       fetch(`/api/nutrition?day=${nutritionDay}`).then((r) => r.json()),
       fetch(`/api/weights?days=${weightRange}`).then((r) => r.json()),
       fetch("/api/recurring").then((r) => r.json()).catch(() => null),
       fetch(`/api/stats?window=${cashWindow}&tz=${tz}`).then((r) => r.json()).catch(() => null),
+      fetch("/api/networth").then((r) => r.json()).catch(() => null),
     ]);
     setPortfolio(p);
     setNutrition(n);
     setWeight(w);
     setDca(d);
     setStats(s);
+    setNetworth(nw);
   }, [weightRange, cashWindow, nutritionDay]);
+
+  // Stable ref so the demo-mode listener (mounted once) can call the latest refreshAll.
+  const refreshAllRef = useRef<(() => void) | null>(null);
+  useEffect(() => { refreshAllRef.current = refreshAll; }, [refreshAll]);
+
+  // Fetch an AI news briefing (shells to Hermes server-side). Respects the
+  // active category filter so "Summarize" on the Taiwan tab summarizes Taiwan.
+  const fetchNewsSummary = useCallback(async (category: string) => {
+    setNewsSummaryLoading(true);
+    setNewsSummaryOpen(true);
+    setNewsSummary(null);
+    try {
+      const q = category && category !== "All" ? `?category=${encodeURIComponent(category.toLowerCase())}` : "";
+      const r = await fetch(`/api/headlines/summary${q}`);
+      const j = await r.json();
+      setNewsSummary(j?.summary || (j?.error ? `Couldn't summarize: ${j.error}` : "No summary available."));
+    } catch (e) {
+      setNewsSummary(`Couldn't summarize: ${String(e)}`);
+    } finally {
+      setNewsSummaryLoading(false);
+    }
+  }, []);
+  // Clear a stale summary when the category filter changes.
+  useEffect(() => { setNewsSummary(null); setNewsSummaryOpen(false); }, [newsCategory]);
 
   useEffect(() => {
     refreshAll();
@@ -268,6 +378,38 @@ export default function Home() {
         .catch(() => {});
     load();
     const t = setInterval(load, 5 * 60_000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Next upcoming calendar event for the marquee. Light poll (shells out to osascript).
+  useEffect(() => {
+    const load = () =>
+      fetch("/api/calendar?days=14")
+        .then((r) => r.json())
+        .then((j) => {
+          if (!j?.available || !Array.isArray(j.events)) { setNextEvent(null); return; }
+          const now = Date.now();
+          const upcoming = j.events.find((e: CalEventLite) => e.start_ts != null && e.start_ts >= now) || j.events[0] || null;
+          setNextEvent(upcoming);
+        })
+        .catch(() => setNextEvent(null));
+    load();
+    const t = setInterval(load, 5 * 60_000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Weather for the marquee.
+  useEffect(() => {
+    const load = () =>
+      fetch("/api/weather")
+        .then((r) => r.json())
+        .then((j) => {
+          if (j?.available && j.current) setWeather({ location: j.location, current: j.current });
+          else setWeather(null);
+        })
+        .catch(() => setWeather(null));
+    load();
+    const t = setInterval(load, 10 * 60_000);
     return () => clearInterval(t);
   }, []);
 
@@ -524,13 +666,15 @@ export default function Home() {
 
   // Build marquee items (top headline + tickers + streaks + DCA countdown)
   const marqueeItems: MarqueeItem[] = [];
-  // Headlines
-  for (const h of headlines.slice(0, 5)) {
+  // Headlines — show a category tag so the marquee advertises the variety.
+  for (const h of headlines.slice(0, 8)) {
     marqueeItems.push({
       key: `news-${h.link || h.title}`,
       href: h.link || undefined,
       node: (
         <>
+          {h.category && <span className={newsTone(h.category)}>{h.category.toUpperCase()}</span>}
+          {h.category && <span className="text-zinc-600"> · </span>}
           <span className="text-amber-400">📰 {h.source}</span>
           <span className="text-zinc-400"> · </span>
           <span className="text-zinc-200">{h.title}</span>
@@ -587,6 +731,42 @@ export default function Home() {
         ),
       });
     }
+  }
+  // Next calendar event
+  if (nextEvent) {
+    const when = (() => {
+      if (nextEvent.start_ts == null) return "";
+      const d = new Date(nextEvent.start_ts);
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const diff = Math.round((new Date(d).setHours(0, 0, 0, 0) - today.getTime()) / 86400_000);
+      const day = diff === 0 ? "Today" : diff === 1 ? "Tmrw" : d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+      const time = nextEvent.all_day || nextEvent.multi_day ? "" : ` ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+      return `${day}${time}`;
+    })();
+    marqueeItems.push({
+      key: "next-event",
+      node: (
+        <>
+          <span className="text-sky-300">📅 Next:</span>{" "}
+          <span className="text-zinc-200">{nextEvent.title}</span>
+          {when && <span className="text-zinc-500"> · {when}</span>}
+        </>
+      ),
+    });
+  }
+  // Weather
+  if (weather?.current) {
+    marqueeItems.push({
+      key: "weather",
+      node: (
+        <>
+          <span>{weather.current.emoji}</span>{" "}
+          <span className="text-zinc-200">{weather.current.temp}°</span>
+          <span className="text-zinc-500"> · {weather.current.label}</span>
+          <span className="text-zinc-600"> · {weather.location}</span>
+        </>
+      ),
+    });
   }
 
   return (
@@ -646,6 +826,18 @@ export default function Home() {
           )}
         </div>
         <div className="flex items-center gap-3 text-[12px] text-zinc-500 shrink-0">
+          {networth?.counts && (networth.counts.cash > 0 || networth.counts.liabilities > 0) && (
+            <div
+              className="hidden sm:flex flex-col items-end leading-none ml-2"
+              title={`Net worth = investments ${fmtMoney(totalsToDisplay(networth.components.portfolio.usd), displayCcy)} + cash ${fmtMoney(totalsToDisplay(networth.components.cash.usd), displayCcy)} − debts ${fmtMoney(totalsToDisplay(networth.components.liabilities.usd), displayCcy)}`}
+            >
+              <span className="text-[10px] uppercase tracking-wider text-zinc-500">Net worth</span>
+              <span className="text-[13px] font-semibold tabular-nums text-zinc-100">
+                {fmtMoney(totalsToDisplay(networth.net_worth.usd), displayCcy)}
+              </span>
+            </div>
+          )}
+          <WeeklyReview />
           <div className="relative ml-2">
             <button
               onClick={() => setDcaOpen((v) => !v)}
@@ -719,6 +911,19 @@ export default function Home() {
               </button>
             ))}
           </div>
+          <button
+            onClick={() => setDemoMode(!demoMode)}
+            title={demoMode ? "Demo mode ON — showing mock data (not your real data). Click to turn off." : "Demo mode — fill the dashboard with realistic mock data for screenshots. Nothing is written to your database."}
+            aria-label={demoMode ? "Disable demo mode" : "Enable demo mode"}
+            className={`ml-1 inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[12px] transition-colors ${
+              demoMode
+                ? "border-fuchsia-700/60 bg-fuchsia-950/40 text-fuchsia-300 hover:bg-fuchsia-900/40"
+                : "border-zinc-700 text-zinc-400 hover:bg-zinc-800"
+            }`}
+          >
+            {demoMode && <span className="inline-block h-1.5 w-1.5 rounded-full bg-fuchsia-400 animate-pulse" />}
+            Demo
+          </button>
         </div>
       </header>
 
@@ -1136,31 +1341,77 @@ export default function Home() {
           defaultLayout: { x: 0, y: 19, w: 6, h: 6 },
           dockable: true,
           defaultDocked: true,
-          render: () => (
-            <div className="h-full overflow-y-auto">
-              {headlines.length === 0 ? (
-                <div className="px-3 py-6 text-center text-[12px] text-zinc-500">No headlines yet.</div>
-              ) : (
-                <ul className="divide-y divide-zinc-900">
-                  {headlines.map((h, i) => (
-                    <li key={`${h.link}-${i}`}>
-                      <a
-                        href={h.link}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block px-3 py-2 hover:bg-zinc-900/60"
-                      >
-                        <div className="flex items-center gap-2 mb-0.5">
-                          <span className="text-[10px] uppercase tracking-wider text-amber-400">{h.source}</span>
-                        </div>
-                        <div className="text-[12px] text-zinc-200 leading-snug">{h.title}</div>
-                      </a>
-                    </li>
-                  ))}
-                </ul>
+          render: () => {
+            const cats = ["All", ...Array.from(new Set(headlines.map((h) => h.category).filter(Boolean) as string[]))];
+            const shown = newsCategory === "All" ? headlines : headlines.filter((h) => h.category === newsCategory);
+            return (
+            <div className="h-full flex flex-col min-h-0">
+              {/* Category filter chips + Summarize */}
+              <div className="shrink-0 flex items-center gap-1 flex-wrap px-2 py-1.5 border-b border-zinc-900">
+                {cats.map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => setNewsCategory(c)}
+                    className={`text-[10px] uppercase tracking-wider rounded-full px-2 py-0.5 border transition-colors ${
+                      newsCategory === c
+                        ? "border-zinc-600 bg-zinc-800 text-zinc-100"
+                        : `border-zinc-800 hover:border-zinc-600 ${c === "All" ? "text-zinc-400" : newsTone(c)}`
+                    }`}
+                  >
+                    {c}
+                  </button>
+                ))}
+                <button
+                  onClick={() => fetchNewsSummary(newsCategory)}
+                  disabled={newsSummaryLoading || shown.length === 0}
+                  className="ml-auto text-[10px] uppercase tracking-wider rounded-full px-2 py-0.5 border border-violet-700/60 bg-violet-950/30 text-violet-300 hover:bg-violet-900/40 disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="AI briefing of the headlines below"
+                >
+                  {newsSummaryLoading ? "✨ …" : "✨ Summarize"}
+                </button>
+              </div>
+              {/* AI summary banner */}
+              {newsSummaryOpen && (
+                <div className="shrink-0 border-b border-zinc-900 bg-violet-950/15 px-3 py-2">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] uppercase tracking-wider text-violet-400">✨ AI Briefing{newsCategory !== "All" ? ` · ${newsCategory}` : ""}</span>
+                    <button onClick={() => setNewsSummaryOpen(false)} className="text-[11px] text-zinc-600 hover:text-zinc-300" title="Hide">✕</button>
+                  </div>
+                  {newsSummaryLoading ? (
+                    <div className="text-[12px] text-zinc-500">Reading the headlines…</div>
+                  ) : (
+                    <div className="text-[12px] text-zinc-300 leading-relaxed whitespace-pre-wrap">{newsSummary}</div>
+                  )}
+                </div>
               )}
+              <div className="flex-1 overflow-y-auto">
+                {shown.length === 0 ? (
+                  <div className="px-3 py-6 text-center text-[12px] text-zinc-500">No headlines yet.</div>
+                ) : (
+                  <ul className="divide-y divide-zinc-900">
+                    {shown.map((h, i) => (
+                      <li key={`${h.link}-${i}`}>
+                        <a
+                          href={h.link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block px-3 py-2 hover:bg-zinc-900/60"
+                        >
+                          <div className="flex items-center gap-2 mb-0.5">
+                            {h.category && <span className={`text-[10px] uppercase tracking-wider ${newsTone(h.category)}`}>{h.category}</span>}
+                            {h.category && <span className="text-zinc-700 text-[10px]">·</span>}
+                            <span className="text-[10px] uppercase tracking-wider text-zinc-500">{h.source}</span>
+                          </div>
+                          <div className="text-[12px] text-zinc-200 leading-snug">{h.title}</div>
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
-          ),
+            );
+          },
         },
         {
           id: "todos",
@@ -1169,16 +1420,75 @@ export default function Home() {
           dockable: true,
           defaultDocked: true,
           render: () => (
-            <div className="h-full p-2 overflow-auto">
-              <TodoMenu />
+            <div className="h-full overflow-auto">
+              <TodoMenu inline />
             </div>
           ),
         },
+        {
+          id: "networth",
+          title: "Net worth",
+          defaultLayout: { x: 0, y: 25, w: 6, h: 8 },
+          dockable: true,
+          defaultDocked: true,
+          render: () => <NetWorthPanel displayCcy={displayCcy} onChanged={refreshAll} />,
+        },
+        {
+          id: "subscriptions",
+          title: "Subscriptions",
+          defaultLayout: { x: 6, y: 25, w: 6, h: 8 },
+          dockable: true,
+          defaultDocked: true,
+          render: () => <SubscriptionPanel displayCcy={displayCcy} fx={fx} onChanged={refreshAll} />,
+        },
+        {
+          id: "habits",
+          title: "Habits",
+          defaultLayout: { x: 0, y: 33, w: 6, h: 7 },
+          dockable: true,
+          defaultDocked: true,
+          render: () => <HabitPanel onChanged={refreshAll} />,
+        },
+        {
+          id: "calendar",
+          title: "📅 Calendar",
+          defaultLayout: { x: 6, y: 33, w: 6, h: 7 },
+          dockable: true,
+          defaultDocked: true,
+          render: () => <CalendarPanel />,
+        },
+        {
+          id: "spotify",
+          title: "🎧 Spotify",
+          defaultLayout: { x: 0, y: 40, w: 4, h: 8 },
+          dockable: true,
+          defaultDocked: true,
+          render: () => <SpotifyPanel />,
+        },
+        {
+          id: "weather",
+          title: "🌤️ Weather",
+          defaultLayout: { x: 4, y: 40, w: 4, h: 8 },
+          dockable: true,
+          defaultDocked: true,
+          render: () => <WeatherPanel />,
+        },
+        // User-generated widgets (Hermes-authored HTML, sandboxed iframe).
+        ...customWidgets.map((cw, i) => ({
+          id: `custom-${cw.id}`,
+          title: `✨ ${cw.title}`,
+          defaultLayout: { x: (i % 3) * 4, y: 48 + Math.floor(i / 3) * 8, w: cw.w || 4, h: cw.h || 6 },
+          dockable: true,
+          render: () => <CustomWidget html={cw.html} title={cw.title} onDelete={() => deleteCustomWidget(cw.id)} />,
+        })),
         ]}
       />
 
+      {/* AI widget generator FAB (bottom-right) */}
+      <WidgetCreator onCreated={loadCustomWidgets} />
+
       {/* Pinned input row */}
-      <div className="shrink-0 px-2 pb-2 pt-1">
+      <div className="shrink-0 px-2 pb-2 pt-1 flex flex-col items-center gap-1">
 
           {lastEntry && Date.now() - lastEntry.at < 30000 && (
             <div
@@ -1290,7 +1600,7 @@ export default function Home() {
           <div className="w-full max-w-lg rounded-2xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
             <div className="mb-3 flex items-baseline justify-between">
               <h3 className="text-xl font-semibold">
-                Confirm {pending.kind === "trade" ? "trade" : pending.kind === "meal" ? "meal" : pending.kind === "weight" ? "weight" : pending.kind === "todo" ? "todo" : "entry"}
+                Confirm {pending.kind === "trade" ? "trade" : pending.kind === "meal" ? "meal" : pending.kind === "weight" ? "weight" : pending.kind === "todo" ? "todo" : pending.kind === "subscription" ? "subscription" : pending.kind === "habit" ? "habit" : pending.kind === "networth" ? (pending.payload.kind === "liability" ? "debt" : "cash") : "entry"}
               </h3>
               <span className="text-[12px] uppercase tracking-wider text-zinc-500">parsed by Hermes</span>
             </div>
@@ -1360,6 +1670,35 @@ export default function Home() {
                   <span className="text-zinc-400">Priority</span>
                   <span>{(["none","low","medium","high"] as const)[pending.payload.priority] ?? "none"}</span>
                 </div>
+              </div>
+            )}
+
+            {pending.kind === "subscription" && (
+              <div className="space-y-2 text-lg">
+                <div className="flex justify-between"><span className="text-zinc-400">Service</span><span className="font-medium">{pending.payload.name}</span></div>
+                <div className="flex justify-between"><span className="text-zinc-400">Price</span><span>{pending.payload.currency === "USD" ? "$" : "NT$"}{pending.payload.amount.toLocaleString()} / {pending.payload.cycle === "yearly" ? "year" : pending.payload.cycle === "weekly" ? "week" : "month"}</span></div>
+                {pending.payload.cycle !== "monthly" && (
+                  <div className="flex justify-between"><span className="text-zinc-400">≈ Monthly</span><span className="text-base text-zinc-300">{pending.payload.currency === "USD" ? "$" : "NT$"}{Math.round(pending.payload.amount * (pending.payload.cycle === "yearly" ? 1 / 12 : 52 / 12)).toLocaleString()}</span></div>
+                )}
+                {pending.payload.next_charge_ts && (
+                  <div className="flex justify-between"><span className="text-zinc-400">Next charge</span><span className="text-base">{new Date(pending.payload.next_charge_ts).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</span></div>
+                )}
+              </div>
+            )}
+
+            {pending.kind === "habit" && (
+              <div className="space-y-2 text-lg">
+                <div className="flex justify-between"><span className="text-zinc-400">Habit</span><span className="font-medium">{pending.payload.name}</span></div>
+                <div className="flex justify-between"><span className="text-zinc-400">Today</span><span className={pending.payload.status === "done" ? "text-emerald-400" : "text-zinc-400"}>{pending.payload.status === "done" ? "✓ done" : "⊘ skipped"}</span></div>
+              </div>
+            )}
+
+            {pending.kind === "networth" && (
+              <div className="space-y-2 text-lg">
+                <div className="flex justify-between"><span className="text-zinc-400">Type</span><span className={pending.payload.kind === "liability" ? "text-rose-400" : "text-emerald-400"}>{pending.payload.kind === "liability" ? "Debt / liability" : "Cash / asset"}</span></div>
+                <div className="flex justify-between"><span className="text-zinc-400">Name</span><span className="font-medium">{pending.payload.name}</span></div>
+                <div className="flex justify-between"><span className="text-zinc-400">Balance</span><span className="tabular-nums">{pending.payload.kind === "liability" ? "−" : ""}{pending.payload.currency === "USD" ? "$" : "NT$"}{pending.payload.balance.toLocaleString()}</span></div>
+                <div className="flex justify-between"><span className="text-zinc-400">Category</span><span className="text-base text-zinc-300">{pending.payload.account_kind.replace("_", " ")}</span></div>
               </div>
             )}
 

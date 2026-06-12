@@ -86,6 +86,87 @@ CREATE TABLE IF NOT EXISTS projects (
   archived_at INTEGER                  -- soft-archive (no hard delete per SOUL)
 );
 CREATE INDEX IF NOT EXISTS idx_projects_active ON projects(archived_at, phase, priority);
+
+-- Recurring subscriptions (Netflix, Spotify, etc.) with cancel/charge reminders.
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_ts INTEGER NOT NULL,
+  updated_ts INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  amount REAL NOT NULL,                -- price per cycle in native currency
+  currency TEXT NOT NULL DEFAULT 'TWD',-- 'TWD' | 'USD'
+  cycle TEXT NOT NULL DEFAULT 'monthly', -- 'weekly' | 'monthly' | 'yearly'
+  next_charge_ts INTEGER,              -- nullable; epoch ms of next billing date
+  url TEXT,                            -- manage/cancel link
+  notes TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  archived_at INTEGER                  -- soft-cancel (no hard delete per SOUL)
+);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_active ON subscriptions(archived_at, next_charge_ts);
+
+-- Habits + per-day log. One log row per (habit, day); status done|skip.
+CREATE TABLE IF NOT EXISTS habits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_ts INTEGER NOT NULL,
+  updated_ts INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  emoji TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  archived_at INTEGER                  -- soft-archive (no hard delete per SOUL)
+);
+CREATE INDEX IF NOT EXISTS idx_habits_active ON habits(archived_at, sort_order);
+
+CREATE TABLE IF NOT EXISTS habit_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  habit_id INTEGER NOT NULL,
+  day TEXT NOT NULL,                   -- 'YYYY-MM-DD' local day
+  status TEXT NOT NULL DEFAULT 'done', -- 'done' | 'skip'
+  ts INTEGER NOT NULL,                 -- when logged (epoch ms)
+  UNIQUE(habit_id, day)
+);
+CREATE INDEX IF NOT EXISTS idx_habit_logs_habit ON habit_logs(habit_id, day);
+
+-- Net worth: manual cash accounts (assets) + liabilities (debts).
+CREATE TABLE IF NOT EXISTS cash_accounts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_ts INTEGER NOT NULL,
+  updated_ts INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  balance REAL NOT NULL DEFAULT 0,     -- balance in native currency (assets, positive)
+  currency TEXT NOT NULL DEFAULT 'TWD',-- 'TWD' | 'USD'
+  kind TEXT NOT NULL DEFAULT 'cash',   -- 'cash' | 'bank' | 'brokerage_cash' | 'other'
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  archived_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_cash_active ON cash_accounts(archived_at, sort_order);
+
+CREATE TABLE IF NOT EXISTS liabilities (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_ts INTEGER NOT NULL,
+  updated_ts INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  balance REAL NOT NULL DEFAULT 0,     -- amount owed in native currency (positive number)
+  currency TEXT NOT NULL DEFAULT 'TWD',-- 'TWD' | 'USD'
+  kind TEXT NOT NULL DEFAULT 'loan',   -- 'loan' | 'credit_card' | 'mortgage' | 'other'
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  archived_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_liabilities_active ON liabilities(archived_at, sort_order);
+
+-- User-generated widgets: natural-language prompt → Hermes-authored self-contained
+-- HTML, rendered in a sandboxed iframe. html is a full <!doctype html> document.
+CREATE TABLE IF NOT EXISTS custom_widgets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_ts INTEGER NOT NULL,
+  updated_ts INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  prompt TEXT NOT NULL,            -- the user's natural-language request
+  html TEXT NOT NULL,              -- self-contained HTML document (sandboxed on render)
+  w INTEGER NOT NULL DEFAULT 4,    -- default grid size
+  h INTEGER NOT NULL DEFAULT 6,
+  archived_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_custom_widgets_active ON custom_widgets(archived_at, created_ts);
 `);
 
 // Idempotent migration: add deleted_at to trades/meals/weights if missing.

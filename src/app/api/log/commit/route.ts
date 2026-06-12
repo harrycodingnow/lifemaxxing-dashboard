@@ -4,7 +4,14 @@ import db from "@/lib/db";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Kind = "trade" | "meal" | "weight" | "todo";
+type Kind = "trade" | "meal" | "weight" | "todo" | "subscription" | "habit" | "networth";
+
+const CYCLE_MULT: Record<string, number> = { weekly: 52 / 12, monthly: 1, yearly: 1 / 12 };
+
+// Local YYYY-MM-DD honouring an optional tz offset (minutes east of UTC).
+function localDay(ts: number, tzOffsetMin: number): string {
+  return new Date(ts - tzOffsetMin * 60_000).toISOString().slice(0, 10);
+}
 
 function writeEntry(kind: Kind, payload: any, sourceText: string, ts: number) {
   if (kind === "trade") {
@@ -84,6 +91,78 @@ function writeEntry(kind: Kind, payload: any, sourceText: string, ts: number) {
       id: info.lastInsertRowid,
       message: `todo "${title}" (${due}${priority ? `, P${priority}` : ""})`,
     };
+  }
+  if (kind === "subscription") {
+    const s = payload;
+    const name = (s.name || "").toString().slice(0, 80);
+    if (!name) throw new Error("subscription missing name");
+    const amount = Math.max(0, Number(s.amount) || 0);
+    const currency = s.currency === "USD" ? "USD" : "TWD";
+    const cycle = ["weekly", "monthly", "yearly"].includes(s.cycle) ? s.cycle : "monthly";
+    const nextCharge = s.next_charge_ts == null ? null : Number(s.next_charge_ts);
+    const info = db
+      .prepare(
+        `INSERT INTO subscriptions (created_ts, updated_ts, name, amount, currency, cycle, next_charge_ts, url, notes, sort_order)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(ts, ts, name, amount, currency, cycle, nextCharge, s.url || null, s.notes || null, ts);
+    const sym = currency === "USD" ? "$" : "NT$";
+    const monthly = Math.round(amount * (CYCLE_MULT[cycle] ?? 1));
+    return {
+      id: info.lastInsertRowid,
+      message: `subscription ${name} ${sym}${amount}/${cycle === "yearly" ? "yr" : cycle === "weekly" ? "wk" : "mo"} (≈${sym}${monthly}/mo)`,
+    };
+  }
+  if (kind === "habit") {
+    const h = payload;
+    const name = (h.name || "").toString().toLowerCase().trim().slice(0, 40);
+    if (!name) throw new Error("habit missing name");
+    const status = h.status === "skip" ? "skip" : "done";
+    // Resolve (or create) the habit by name, then upsert today's log row.
+    let habit = db.prepare("SELECT id FROM habits WHERE lower(name) = ? AND archived_at IS NULL").get(name) as { id: number } | undefined;
+    if (!habit) {
+      const created = db
+        .prepare("INSERT INTO habits (created_ts, updated_ts, name, sort_order) VALUES (?,?,?,?)")
+        .run(ts, ts, name, ts);
+      habit = { id: Number(created.lastInsertRowid) };
+    }
+    const tzMin = Number.isFinite(Number(h.tz)) ? Number(h.tz) : 0;
+    const day: string = typeof h.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(h.day) ? h.day : localDay(ts, tzMin);
+    db.prepare(
+      `INSERT INTO habit_logs (habit_id, day, status, ts)
+       VALUES (?,?,?,?)
+       ON CONFLICT(habit_id, day) DO UPDATE SET status = excluded.status, ts = excluded.ts`,
+    ).run(habit.id, day, status, ts);
+    return {
+      id: habit.id,
+      message: `habit "${name}" ${status === "skip" ? "skipped" : "done"} for ${day}`,
+    };
+  }
+  if (kind === "networth") {
+    const p = payload;
+    const name = (p.name || "").toString().slice(0, 80);
+    if (!name) throw new Error("networth missing name");
+    const balance = Math.abs(Number(p.balance) || 0);
+    const currency = p.currency === "USD" ? "USD" : "TWD";
+    const sym = currency === "USD" ? "$" : "NT$";
+    if (p.kind === "liability") {
+      const ak = ["loan", "credit_card", "mortgage", "other"].includes(p.account_kind) ? p.account_kind : "loan";
+      const info = db
+        .prepare(
+          `INSERT INTO liabilities (created_ts, updated_ts, name, balance, currency, kind, sort_order)
+           VALUES (?,?,?,?,?,?,?)`,
+        )
+        .run(ts, ts, name, balance, currency, ak, ts);
+      return { id: info.lastInsertRowid, message: `liability ${name} ${sym}${balance.toLocaleString()}` };
+    }
+    const ak = ["cash", "bank", "brokerage_cash", "other"].includes(p.account_kind) ? p.account_kind : "cash";
+    const info = db
+      .prepare(
+        `INSERT INTO cash_accounts (created_ts, updated_ts, name, balance, currency, kind, sort_order)
+         VALUES (?,?,?,?,?,?,?)`,
+      )
+      .run(ts, ts, name, balance, currency, ak, ts);
+    return { id: info.lastInsertRowid, message: `cash ${name} ${sym}${balance.toLocaleString()}` };
   }
   throw new Error(`unknown kind: ${kind}`);
 }
