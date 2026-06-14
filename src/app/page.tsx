@@ -204,6 +204,24 @@ export default function Home() {
     | { kind: "networth"; preview: string; payload: { kind: "cash" | "liability"; name: string; balance: number; currency: "TWD" | "USD"; account_kind: string }; text: string }
     | { kind: "batch"; preview: string; payload: { entries: Array<{ kind: "trade" | "meal" | "weight" | "todo" | "subscription" | "habit" | "networth"; payload: any; raw?: string }> }; text: string };
   const [pending, setPending] = useState<Pending | null>(null);
+  // "Ask your data" answer card. Set when the log route returns kind=answer.
+  // Lives separately from `pending` because there's nothing to confirm — it's
+  // a read-only display surfaced above the input row until the user dismisses.
+  type AnswerCard = {
+    question: string;
+    answer: string;
+    display: "table" | "scalar" | "list" | "narrative";
+    sql?: string | null;
+    params?: unknown[];
+    explanation?: string | null;
+    columns?: string[];
+    rows?: unknown[][];
+    row_count?: number;
+    truncated?: boolean;
+    error?: string | null;
+  };
+  const [answer, setAnswer] = useState<AnswerCard | null>(null);
+  const [answerSqlOpen, setAnswerSqlOpen] = useState(false);
   const [committing, setCommitting] = useState(false);
   const [displayCcy, setDisplayCcy] = useState<"TWD" | "USD">("TWD");
   // Demo/mock-data mode (for screenshots). Install the fetch interceptor
@@ -299,7 +317,7 @@ export default function Home() {
   }, []);
   const [placeholderIdx, setPlaceholderIdx] = useState(0);
   const PLACEHOLDER_EXAMPLES = [
-    "Log a trade, meal, weight, todo, habit…",
+    "Log anything, or ask any question…",
     "bought 5 NVDA @ 880",
     "had a louisa shake + bagel",
     "72.3kg",
@@ -309,6 +327,10 @@ export default function Home() {
     "netflix 390/mo",
     "cathay cash 250000",
     "sold 0.01 BTC @ 95000",
+    "how much did I spend on coffee this month?",
+    "all my BTC trades",
+    "average protein on days I hit the gym",
+    "what are my top 5 longest habit streaks?",
   ];
 
   useEffect(() => {
@@ -571,6 +593,23 @@ export default function Home() {
           setPending({ kind: j.kind, preview: j.preview, payload: j.payload, text: t });
           return { needsModal: true };
         }
+      } else if (j.kind === "answer") {
+        // Question response (NL → SQL → result). Render an inline answer card
+        // instead of a toast — the user wants to see the data, not a flash.
+        setAnswer({
+          question: t,
+          answer: j.answer || j.message || "",
+          display: j.display || "narrative",
+          sql: j.sql ?? null,
+          params: j.params,
+          explanation: j.explanation ?? null,
+          columns: j.columns,
+          rows: j.rows,
+          row_count: j.row_count,
+          truncated: !!j.truncated,
+          error: j.error ?? null,
+        });
+        setAnswerSqlOpen(false);
       } else {
         await refreshAll();
         setToast("Saved");
@@ -1514,6 +1553,104 @@ export default function Home() {
 
       {/* Pinned input row */}
       <div className="shrink-0 px-2 pb-2 pt-1 flex flex-col items-center gap-1">
+
+          {answer && (
+            <div
+              data-testid="answer-card"
+              className="w-full max-w-3xl rounded-xl border border-zinc-700 bg-zinc-900/85 backdrop-blur px-3 py-2 text-[12px] text-zinc-200 shadow-xl shadow-black/40 animate-[fadeIn_140ms_ease-out]"
+            >
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-[10px] uppercase tracking-widest text-emerald-400 shrink-0">Q</span>
+                  <span className="truncate text-zinc-300" title={answer.question}>{answer.question}</span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {answer.sql && (
+                    <button
+                      type="button"
+                      onClick={() => setAnswerSqlOpen((v) => !v)}
+                      className="text-[10px] text-zinc-500 hover:text-zinc-200 border border-zinc-800 hover:border-zinc-600 rounded px-1.5 py-0.5"
+                      title={answerSqlOpen ? "Hide SQL" : "Show SQL"}
+                    >
+                      {answerSqlOpen ? "hide SQL" : "show SQL"}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setAnswer(null)}
+                    className="text-zinc-500 hover:text-zinc-200 text-sm leading-none px-1"
+                    title="Dismiss"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+
+              {/* Result body — varies by display kind */}
+              {answer.display === "narrative" || !answer.columns || !answer.rows ? (
+                <div className="text-zinc-100 leading-snug">
+                  {answer.error ? <span className="text-rose-300">{answer.answer}</span> : answer.answer}
+                </div>
+              ) : answer.display === "scalar" && answer.rows[0]?.[0] != null ? (
+                <div className="flex items-baseline gap-3 flex-wrap">
+                  <div className="text-2xl tabular-nums text-emerald-300 leading-none">
+                    {String(answer.rows[0][0])}
+                  </div>
+                  <div className="text-[11px] text-zinc-500">{answer.columns[0]}</div>
+                  {answer.explanation && (
+                    <div className="text-[11px] text-zinc-400 basis-full">{answer.explanation}</div>
+                  )}
+                </div>
+              ) : answer.rows.length === 0 ? (
+                <div className="text-zinc-500 italic">No rows.</div>
+              ) : (
+                <>
+                  {answer.explanation && (
+                    <div className="text-[11px] text-zinc-400 mb-1.5">{answer.explanation}</div>
+                  )}
+                  <div className="max-h-64 overflow-auto rounded border border-zinc-800">
+                    <table className="w-full text-[11px] tabular-nums">
+                      <thead className="bg-zinc-900/80 text-zinc-500 sticky top-0">
+                        <tr>
+                          {answer.columns.map((c, i) => (
+                            <th key={i} className="text-left font-medium uppercase tracking-wider px-2 py-1 border-b border-zinc-800">{c}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {answer.rows.map((row, ri) => (
+                          <tr key={ri} className="odd:bg-zinc-950/30">
+                            {row.map((cell, ci) => (
+                              <td key={ci} className="px-2 py-1 border-b border-zinc-900 text-zinc-200 align-top">
+                                {cell == null ? <span className="text-zinc-600">·</span> : String(cell)}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="text-[10px] text-zinc-500 mt-1">
+                    {answer.row_count} row{answer.row_count === 1 ? "" : "s"}
+                    {answer.truncated && <span className="text-amber-400"> · truncated at cap</span>}
+                  </div>
+                </>
+              )}
+
+              {answerSqlOpen && answer.sql && (
+                <pre className="mt-2 text-[10px] leading-snug text-zinc-400 bg-black/40 border border-zinc-800 rounded px-2 py-1.5 overflow-x-auto whitespace-pre-wrap break-all">
+                  {answer.sql}
+                  {answer.params && answer.params.length > 0 && (
+                    <>
+                      {"\n"}
+                      <span className="text-zinc-500">params: </span>
+                      {JSON.stringify(answer.params)}
+                    </>
+                  )}
+                </pre>
+              )}
+            </div>
+          )}
 
           {lastEntry && Date.now() - lastEntry.at < 30000 && (
             <div

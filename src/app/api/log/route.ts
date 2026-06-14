@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import db from "@/lib/db";
 import { hermesCall, extractJson } from "@/lib/hermes";
-import { ROUTER_PROMPT, TRADE_PARSE_PROMPT, MEAL_RESEARCH_PROMPT, WEIGHT_PARSE_PROMPT, BATCH_PARSE_PROMPT, TODO_PARSE_PROMPT, SUBSCRIPTION_PARSE_PROMPT, HABIT_PARSE_PROMPT, NETWORTH_PARSE_PROMPT } from "@/lib/prompts";
+import { ROUTER_PROMPT, TRADE_PARSE_PROMPT, MEAL_RESEARCH_PROMPT, WEIGHT_PARSE_PROMPT, BATCH_PARSE_PROMPT, TODO_PARSE_PROMPT, SUBSCRIPTION_PARSE_PROMPT, HABIT_PARSE_PROMPT, NETWORTH_PARSE_PROMPT, ASK_PROMPT } from "@/lib/prompts";
 import { matchKnownFoods, hitToMealItem, type KnownFoodHit } from "@/lib/known-foods";
+import { guardSelect, applyRowCap } from "@/lib/sql-guard";
 
 // SECURITY: this endpoint shells out to the local `hermes` CLI with --yolo --ignore-rules,
 // granting full tool access on the host machine. NEVER expose this dashboard to a public
@@ -536,15 +537,132 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // question / unknown: nothing to confirm, just log assistant reply directly
+  // question: NL → safe read-only SQL → execute → return as an answer card.
+  if (routed.intent === "question") {
+    const MAX_ROWS = 500;
+    const nowIso = new Date(Date.now() - new Date().getTimezoneOffset() * 60_000)
+      .toISOString()
+      .slice(0, 16);
+
+    type AskOut =
+      | { kind: "sql"; sql: string; params?: unknown[]; explanation?: string; display?: "table" | "scalar" | "list" }
+      | { kind: "narrative"; narrative: string };
+
+    let parsed: AskOut | null = null;
+    let askError: string | null = null;
+    try {
+      const raw = await hermesCall(ASK_PROMPT(text, nowIso), { timeoutMs: 90_000 });
+      parsed = extractJson<AskOut>(raw);
+    } catch (e) {
+      askError = (e as Error).message;
+    }
+
+    const tsNow = Date.now();
+    db.prepare("INSERT INTO chat_log (ts, role, text, meta_json) VALUES (?,?,?,?)").run(
+      tsNow, "user", text, null,
+    );
+
+    // Helper to log assistant reply + return a uniform shape.
+    const reply = (msg: string, extra: Record<string, unknown> = {}) => {
+      db.prepare("INSERT INTO chat_log (ts, role, text, meta_json) VALUES (?,?,?,?)").run(
+        Date.now(), "assistant", msg, JSON.stringify({ kind: "answer", ...extra }),
+      );
+      return NextResponse.json({
+        kind: "answer",
+        routed,
+        message: msg,
+        needsConfirm: false,
+        ...extra,
+      });
+    };
+
+    if (askError || !parsed) {
+      return reply(`Couldn't answer that: ${askError || "model returned no parseable JSON"}`, {
+        display: "narrative",
+        answer: "Question could not be parsed.",
+        error: askError,
+      });
+    }
+
+    if (parsed.kind === "narrative") {
+      const narrative = String(parsed.narrative || "").trim() || "No answer.";
+      return reply(narrative, { display: "narrative", answer: narrative });
+    }
+
+    if (parsed.kind !== "sql" || typeof parsed.sql !== "string") {
+      return reply("Model returned an invalid response shape.", {
+        display: "narrative",
+        answer: "Model returned an invalid response shape.",
+      });
+    }
+
+    const guard = guardSelect(parsed.sql);
+    if (!guard.ok) {
+      return reply(`Unsafe SQL rejected: ${guard.reason}`, {
+        display: "narrative",
+        answer: `Unsafe SQL rejected: ${guard.reason}`,
+        sql: parsed.sql,
+        explanation: parsed.explanation,
+      });
+    }
+    const safeSql = applyRowCap(guard.sql, MAX_ROWS);
+    const askParams = Array.isArray(parsed.params) ? parsed.params : [];
+
+    let columns: string[] = [];
+    let rows: unknown[][] = [];
+    try {
+      const stmt = db.prepare(safeSql);
+      const colInfo = stmt.columns() as Array<{ name: string }>;
+      columns = colInfo.map((c) => c.name);
+      rows = stmt.raw().all(...(askParams as never[])) as unknown[][];
+    } catch (e) {
+      return reply(`SQL execution failed: ${(e as Error).message}`, {
+        display: "narrative",
+        answer: `SQL execution failed: ${(e as Error).message}`,
+        sql: safeSql,
+        params: askParams,
+        explanation: parsed.explanation,
+      });
+    }
+
+    const truncated = rows.length >= MAX_ROWS;
+    const display: "table" | "scalar" | "list" =
+      parsed.display === "scalar" || parsed.display === "list" || parsed.display === "table"
+        ? parsed.display
+        : rows.length === 1 && columns.length === 1
+          ? "scalar"
+          : "table";
+
+    let answer = parsed.explanation || "";
+    if (display === "scalar" && rows[0]?.[0] != null) {
+      answer = `${columns[0]} = ${rows[0][0]}${parsed.explanation ? ` — ${parsed.explanation}` : ""}`;
+    } else if (rows.length === 0) {
+      answer = parsed.explanation ? `${parsed.explanation} (no rows matched)` : "No matching rows.";
+    } else {
+      answer = parsed.explanation
+        ? `${parsed.explanation} (${rows.length} row${rows.length === 1 ? "" : "s"})`
+        : `${rows.length} row${rows.length === 1 ? "" : "s"}`;
+    }
+
+    return reply(answer, {
+      display,
+      answer,
+      sql: safeSql,
+      params: askParams,
+      explanation: parsed.explanation || null,
+      columns,
+      rows,
+      row_count: rows.length,
+      truncated,
+    });
+  }
+
+  // unknown: nothing to confirm, just log assistant reply directly
   const now = Date.now();
   db.prepare("INSERT INTO chat_log (ts, role, text, meta_json) VALUES (?,?,?,?)").run(
     now, "user", text, null,
   );
-  const assistantMsg =
-    routed.intent === "question"
-      ? `That looks like a question, not a log entry. (${routed.reason})`
-      : `Not sure how to log that: ${routed.reason}`;
+  const assistantMsg = `Not sure how to log that: ${routed.reason}`;
   db.prepare("INSERT INTO chat_log (ts, role, text, meta_json) VALUES (?,?,?,?)").run(
     Date.now(), "assistant", assistantMsg, JSON.stringify({ kind: routed.intent, routed }),
   );

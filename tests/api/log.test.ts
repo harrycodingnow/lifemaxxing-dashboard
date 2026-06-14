@@ -82,14 +82,68 @@ describe("POST /api/log", () => {
     expect(json.needsConfirm).toBe(true);
   });
 
-  it("question intent → writes to chat_log + needsConfirm:false", async () => {
-    setHermesResponder(() => ROUTER_QUESTION);
-    const res = await POST(makeRequest("/api/log", { method: "POST", body: { text: "what is my net worth?" } }));
+  it("question intent → calls ASK_PROMPT, executes SQL, returns kind=answer + rows", async () => {
+    // First Hermes call = router → question. Second = ASK_PROMPT → a SELECT.
+    let callIdx = 0;
+    setHermesResponder((p) => {
+      callIdx++;
+      if (p.includes("strict JSON router")) return ROUTER_QUESTION;
+      if (p.includes("strict JSON SQL-generator")) {
+        return JSON.stringify({
+          kind: "sql",
+          sql: "SELECT COUNT(*) AS n FROM trades WHERE deleted_at IS NULL LIMIT 1",
+          params: [],
+          explanation: "Number of trades on the books.",
+          display: "scalar",
+        });
+      }
+      throw new Error("unexpected hermes call: " + p.slice(0, 80));
+    });
+    const res = await POST(makeRequest("/api/log", { method: "POST", body: { text: "how many trades do I have?" } }));
     const json = await jsonOf(res);
-    expect(json.kind).toBe("question");
+    expect(res.status).toBe(200);
+    expect(json.kind).toBe("answer");
     expect(json.needsConfirm).toBe(false);
+    expect(json.display).toBe("scalar");
+    expect(json.columns).toEqual(["n"]);
+    expect(json.rows).toEqual([[0]]); // empty DB
+    expect(json.answer).toMatch(/n = 0/);
+    // Both Hermes calls were made (router + ask).
+    expect(callIdx).toBe(2);
+    // chat_log got user + assistant.
     const rows = getDb().prepare("SELECT role FROM chat_log ORDER BY id").all() as { role: string }[];
     expect(rows.map((r) => r.role)).toEqual(["user", "assistant"]);
+  });
+
+  it("question intent + unsafe SQL → routes through but answer flags rejection", async () => {
+    setHermesResponder((p) => {
+      if (p.includes("strict JSON router")) return ROUTER_QUESTION;
+      if (p.includes("strict JSON SQL-generator")) {
+        return JSON.stringify({ kind: "sql", sql: "DROP TABLE trades", params: [] });
+      }
+      throw new Error("unexpected: " + p.slice(0, 60));
+    });
+    const res = await POST(makeRequest("/api/log", { method: "POST", body: { text: "drop em" } }));
+    const json = await jsonOf(res);
+    expect(res.status).toBe(200); // logged in chat_log, not a 4xx
+    expect(json.kind).toBe("answer");
+    expect(json.display).toBe("narrative");
+    expect(json.answer).toMatch(/Unsafe SQL rejected/i);
+  });
+
+  it("question intent + narrative reply → bubbles up as narrative answer", async () => {
+    setHermesResponder((p) => {
+      if (p.includes("strict JSON router")) return ROUTER_QUESTION;
+      if (p.includes("strict JSON SQL-generator")) {
+        return JSON.stringify({ kind: "narrative", narrative: "Out of scope." });
+      }
+      throw new Error("unexpected: " + p.slice(0, 60));
+    });
+    const res = await POST(makeRequest("/api/log", { method: "POST", body: { text: "what's life?" } }));
+    const json = await jsonOf(res);
+    expect(json.kind).toBe("answer");
+    expect(json.display).toBe("narrative");
+    expect(json.answer).toBe("Out of scope.");
   });
 
   it("unknown intent → writes chat_log w/ apologetic assistant reply", async () => {

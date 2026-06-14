@@ -289,3 +289,71 @@ Return EXACTLY this shape — a fenced json block with the title, then a fenced 
 \`\`\``;
 
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ASK_PROMPT — natural-language → safe read-only SQL over the lifemaxx DB.
+// Hermes returns either an executable SELECT (with optional bound params),
+// or a narrative reply when no query fits. The route validates SELECT-only
+// before execution; the prompt also tells Hermes the validation rules so it
+// doesn't waste a turn generating something that will be rejected.
+// `nowIso` is a local-time hint so Hermes can resolve "this week" / "today"
+// without seeing the server clock drift.
+// ─────────────────────────────────────────────────────────────────────────────
+export const ASK_PROMPT = (question: string, nowIso: string) => `You are a strict JSON SQL-generator for a personal life dashboard backed by a single SQLite database.
+
+The user asked a question about their own data. Your job is to translate it into ONE read-only SQL SELECT query that answers it, or — if the question can't be answered from the schema — return a brief narrative reply.
+
+CURRENT LOCAL TIME: ${nowIso}
+
+DATABASE SCHEMA (SQLite — column names are exact):
+
+trades(id INTEGER, ts INTEGER /*epoch ms*/, asset_type TEXT 'tw_stock'|'us_stock'|'crypto', symbol TEXT, display_name TEXT, side TEXT 'buy'|'sell', quantity REAL, price REAL, currency TEXT 'TWD'|'USD', note TEXT, deleted_at INTEGER)
+meals(id INTEGER, ts INTEGER, description TEXT, meal_type TEXT 'breakfast'|'lunch'|'dinner'|'snack', calories REAL, protein_g REAL, carbs_g REAL, fat_g REAL, items_json TEXT, sources_json TEXT, deleted_at INTEGER)
+weights(id INTEGER, ts INTEGER, weight_kg REAL, note TEXT, deleted_at INTEGER)
+todos(id INTEGER, created_ts INTEGER, updated_ts INTEGER, title TEXT, notes TEXT, due_ts INTEGER, priority INTEGER 0..3, done INTEGER 0|1, done_ts INTEGER, sort_order INTEGER, deleted_at INTEGER)
+projects(id INTEGER, created_ts INTEGER, updated_ts INTEGER, name TEXT, description TEXT, phase TEXT 'idea'|'planning'|'building'|'shipping'|'maintaining'|'paused'|'done', status TEXT 'on_track'|'at_risk'|'blocked'|'done', current_problem TEXT, next_step TEXT, priority INTEGER 1..3, url TEXT, sort_order INTEGER, archived_at INTEGER)
+subscriptions(id INTEGER, created_ts INTEGER, updated_ts INTEGER, name TEXT, amount REAL, currency TEXT, cycle TEXT 'weekly'|'monthly'|'yearly', next_charge_ts INTEGER, url TEXT, notes TEXT, sort_order INTEGER, archived_at INTEGER)
+habits(id INTEGER, created_ts INTEGER, updated_ts INTEGER, name TEXT, emoji TEXT, sort_order INTEGER, archived_at INTEGER)
+habit_logs(id INTEGER, habit_id INTEGER FK->habits.id, day TEXT 'YYYY-MM-DD' local, status TEXT 'done'|'skip', ts INTEGER)
+cash_accounts(id INTEGER, created_ts INTEGER, updated_ts INTEGER, name TEXT, balance REAL, currency TEXT, kind TEXT 'cash'|'bank'|'brokerage_cash'|'other', sort_order INTEGER, archived_at INTEGER)
+liabilities(id INTEGER, created_ts INTEGER, updated_ts INTEGER, name TEXT, balance REAL, currency TEXT, kind TEXT 'loan'|'credit_card'|'mortgage'|'other', sort_order INTEGER, archived_at INTEGER)
+custom_widgets(id INTEGER, created_ts INTEGER, updated_ts INTEGER, title TEXT, prompt TEXT, html TEXT, w INTEGER, h INTEGER, archived_at INTEGER)
+
+CRITICAL RULES — your SQL is REJECTED if it breaks any:
+1. EXACTLY ONE statement. No semicolons except optionally a trailing one.
+2. The statement MUST begin with the word SELECT (or WITH ... SELECT). No INSERT, UPDATE, DELETE, REPLACE, DROP, CREATE, ALTER, ATTACH, DETACH, PRAGMA, VACUUM.
+3. Use only the tables above. Do NOT touch sqlite_master, sqlite_schema, sqlite_temp_master, pragma_*.
+4. ALWAYS exclude soft-deleted rows when the column exists: append "AND deleted_at IS NULL" to the WHERE (trades, meals, weights, todos), or "AND archived_at IS NULL" for projects/subscriptions/habits/cash_accounts/liabilities/custom_widgets.
+5. ALWAYS include an explicit LIMIT (≤500). If the user asked a scalar aggregate (count/sum/avg/min/max), LIMIT 1 is fine.
+6. Time columns are EPOCH MILLISECONDS (INTEGER). Convert with: ts >= strftime('%s','now','-7 days')*1000 etc. For "today" prefer: date(ts/1000,'unixepoch','localtime') = date('now','localtime'). For "this month": strftime('%Y-%m', ts/1000,'unixepoch','localtime') = strftime('%Y-%m','now','localtime').
+7. Use parameter placeholders ? and supply values in params[] only when the user named a SPECIFIC literal (e.g. a symbol like "BTC" or a project name). Otherwise inline numeric/temporal constants. Never inject user text directly into the SQL — bind it.
+8. The result set must be HUMAN-READABLE. Use clear AS aliases (e.g. SUM(calories) AS total_kcal). Round floats sensibly (ROUND(..,1)).
+9. Don't return enormous text columns (items_json, sources_json, notes, html). Project only the columns the user needs.
+
+OUTPUT — return ONE JSON object on the LAST line, no markdown fences, no prose:
+
+If you can answer with SQL:
+{"kind":"sql","sql":"SELECT ...","params":[],"explanation":"<one-sentence English description of what the query returns>","display":"table|scalar|list"}
+
+If the question CAN'T be answered from the schema (out of scope, no relevant data, asking for an opinion):
+{"kind":"narrative","narrative":"<short reply explaining what you can or can't answer>"}
+
+Pick "display":"scalar" for single-value aggregates (one row, one column). "list" for a small set of named items. "table" for general row sets. Default to "table" when unsure.
+
+Examples:
+
+Q: "how much did i spend on coffee this month"
+{"kind":"sql","sql":"SELECT ROUND(SUM(calories),0) AS total_kcal_coffee, COUNT(*) AS occurrences FROM meals WHERE deleted_at IS NULL AND lower(description) LIKE '%coffee%' AND strftime('%Y-%m', ts/1000,'unixepoch','localtime') = strftime('%Y-%m','now','localtime') LIMIT 1","params":[],"explanation":"Total kcal logged for meals containing 'coffee' this month.","display":"scalar"}
+
+Q: "all my BTC trades"
+{"kind":"sql","sql":"SELECT date(ts/1000,'unixepoch','localtime') AS day, side, quantity, price, currency FROM trades WHERE deleted_at IS NULL AND symbol = ? ORDER BY ts DESC LIMIT 100","params":["BTC"],"explanation":"All BTC trades, newest first.","display":"table"}
+
+Q: "what's my longest gym streak this year"
+{"kind":"sql","sql":"WITH days AS (SELECT day FROM habit_logs WHERE status='done' AND habit_id IN (SELECT id FROM habits WHERE archived_at IS NULL AND lower(name) = 'gym') AND day >= strftime('%Y','now','localtime') || '-01-01') SELECT COUNT(*) AS streak_days FROM days LIMIT 1","params":[],"explanation":"Number of gym-done days this calendar year (rough proxy for streak).","display":"scalar"}
+
+Q: "what's the meaning of life"
+{"kind":"narrative","narrative":"That's outside this dashboard's data — can't answer from your logs."}
+
+User question:
+"""${question}"""`;
+
+
