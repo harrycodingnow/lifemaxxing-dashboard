@@ -10,6 +10,7 @@ import {
 } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
+import { useT } from "@/lib/i18n";
 
 export type WidgetId = string;
 
@@ -121,6 +122,7 @@ function WidgetHeader({
   title: string;
   onHide?: () => void;
 }) {
+  const { t } = useT();
   return (
     <div className="widget-drag-handle flex items-center justify-between px-2 py-0.5 border-b border-zinc-800/60 cursor-move select-none">
       <span className="text-[10px] uppercase tracking-widest text-zinc-500">{title}</span>
@@ -134,7 +136,7 @@ function WidgetHeader({
             }}
             onMouseDown={(e) => e.stopPropagation()}
             className="text-[11px] text-zinc-500 hover:text-rose-300 px-1.5 py-0.5 rounded hover:bg-zinc-800"
-            title="Hide widget (find it again in the + menu)"
+            title={t("widgetHeader.hide")}
           >
             ✕
           </button>
@@ -163,6 +165,7 @@ function WidgetSidebar({
   onAdd: (id: WidgetId) => void;
   onRemove: (id: WidgetId) => void;
 }) {
+  const { t } = useT();
   const [filter, setFilter] = useState("");
   // Clear the filter every time the panel reopens so it starts clean.
   useEffect(() => {
@@ -184,16 +187,16 @@ function WidgetSidebar({
       >
         <header className="shrink-0 flex items-center justify-between px-3 py-2 border-b border-zinc-800">
           <div>
-            <div className="text-[11px] uppercase tracking-widest text-zinc-500">Widgets</div>
+            <div className="text-[11px] uppercase tracking-widest text-zinc-500">{t("sidebar.title")}</div>
             <div className="text-[10px] text-zinc-600 mt-0.5">
-              Click + to add · drag onto grid · ✕ to hide
+              {t("sidebar.hint")}
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
             className="text-zinc-500 hover:text-zinc-200 px-2"
-            title="Close"
+            title={t("sidebar.close")}
           >
             ✕
           </button>
@@ -203,14 +206,14 @@ function WidgetSidebar({
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter…"
+            placeholder={t("sidebar.filter")}
             className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-[12px] text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-600"
           />
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto px-2 pb-3 pt-1 flex flex-col gap-3">
           {offGrid.length > 0 && (
-            <Section title={`Hidden · ${offGrid.length}`}>
+            <Section title={t("sidebar.hidden", { n: offGrid.length })}>
               {offGrid.map((s) => (
                 <WidgetRow
                   key={s.id}
@@ -222,7 +225,7 @@ function WidgetSidebar({
             </Section>
           )}
           {onGrid.length > 0 && (
-            <Section title={`On grid · ${onGrid.length}`}>
+            <Section title={t("sidebar.onGrid", { n: onGrid.length })}>
               {onGrid.map((s) => (
                 <WidgetRow
                   key={s.id}
@@ -234,7 +237,7 @@ function WidgetSidebar({
             </Section>
           )}
           {filtered.length === 0 && (
-            <div className="text-[12px] text-zinc-600 text-center py-6">No widgets match “{filter}”.</div>
+            <div className="text-[12px] text-zinc-600 text-center py-6">{t("sidebar.empty", { q: filter })}</div>
           )}
         </div>
       </aside>
@@ -269,6 +272,7 @@ function WidgetRow({
   onAdd?: () => void;
   onRemove?: () => void;
 }) {
+  const { t } = useT();
   const hideable = isHideable(spec);
   return (
     <div
@@ -297,21 +301,21 @@ function WidgetRow({
             type="button"
             onClick={onAdd}
             className="text-[11px] text-emerald-300 hover:text-emerald-200 border border-zinc-800 hover:border-emerald-700 rounded px-1.5 py-0.5"
-            title="Add to grid"
+            title={t("sidebar.addToGrid")}
           >
-            + add
+            {t("sidebar.add")}
           </button>
         ) : hideable ? (
           <button
             type="button"
             onClick={onRemove}
             className="text-[11px] text-zinc-500 hover:text-rose-300 border border-zinc-800 hover:border-rose-800 rounded px-1.5 py-0.5"
-            title="Hide from grid"
+            title={t("sidebar.hideFromGrid")}
           >
-            hide
+            {t("sidebar.hide")}
           </button>
         ) : (
-          <span className="text-[10px] text-zinc-700 uppercase tracking-wider">pinned</span>
+          <span className="text-[10px] text-zinc-700 uppercase tracking-wider">{t("sidebar.pinned")}</span>
         )}
       </div>
     </div>
@@ -329,18 +333,18 @@ function SidebarTrigger({
   count: number;
   onClick: () => void;
 }) {
+  const { t } = useT();
   return (
     <button
       type="button"
       data-testid="widget-sidebar-trigger"
       onClick={onClick}
       className="inline-flex items-center gap-1.5 rounded-md border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-800 px-2 py-0.5 text-[12px] text-zinc-300"
-      title="Add or manage widgets"
+      title={t("sidebar.trigger.title")}
     >
-      <span className="text-emerald-400 text-base leading-none">+</span>
-      <span>widgets</span>
+      <span>{t("nav.widgets.add")}</span>
       {count > 0 && (
-        <span className="text-[10px] text-zinc-600 ml-0.5">({count} hidden)</span>
+        <span className="text-[10px] text-zinc-600 ml-0.5">{t("nav.widgets.hidden", { n: count })}</span>
       )}
     </button>
   );

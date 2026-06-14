@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { DEMO_EVENT } from "@/lib/demo-data";
+import { useT } from "@/lib/i18n";
 
 type NowPlaying = {
   is_playing: boolean;
@@ -22,6 +23,7 @@ function fmtTime(ms: number | null): string {
 }
 
 export default function SpotifyPanel() {
+  const { t } = useT();
   const [status, setStatus] = useState<Status | null>(null);
   const [loading, setLoading] = useState(false);
   // Locally interpolated progress so the bar moves smoothly between polls.
@@ -91,7 +93,7 @@ export default function SpotifyPanel() {
         if (!r.ok && r.status !== 202) {
           setCtrlNote(j?.hint || j?.error || `Error ${r.status}`);
         } else if (r.status === 202) {
-          setCtrlNote(j?.hint || "Open the Spotify app on any device first.");
+          setCtrlNote(j?.hint || t("spotify.openApp"));
         }
         // Re-poll so progress + play state catch up.
         await poll();
@@ -101,7 +103,7 @@ export default function SpotifyPanel() {
         setCtrlBusy(null);
       }
     },
-    [poll],
+    [poll, t],
   );
 
   const now = status?.now ?? null;
@@ -138,23 +140,23 @@ export default function SpotifyPanel() {
     <div className="h-full flex flex-col min-h-0 px-3 py-2">
       <div className="flex items-center justify-between mb-1 shrink-0">
         <h2 className="text-[11px] uppercase tracking-widest text-zinc-500 flex items-center gap-1.5">
-          <span className="text-emerald-500">●</span> Spotify
+          <span className="text-emerald-500">●</span> {t("widget.spotify")}
         </h2>
         {status?.connected && (
           <button
             onClick={disconnect}
             disabled={loading}
             className="text-[10px] text-zinc-600 hover:text-rose-400 disabled:opacity-40"
-            title="Disconnect Spotify"
+            title={t("spotify.disconnect")}
           >
-            disconnect
+            {t("spotify.disconnect")}
           </button>
         )}
       </div>
 
       <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-3">
         {!status ? (
-          <div className="text-zinc-600 text-[12px]">Loading…</div>
+          <div className="text-zinc-600 text-[12px]">{t("common.loading")}</div>
         ) : !status.configured ? (
           <div className="text-center text-[12px] text-zinc-500 px-4 leading-snug">
             <div className="mb-1">🎧 Spotify not configured.</div>
@@ -170,7 +172,7 @@ export default function SpotifyPanel() {
               href="/api/spotify/login"
               className="inline-flex items-center gap-2 rounded-full bg-emerald-600 hover:bg-emerald-500 text-zinc-950 font-medium text-[13px] px-4 py-1.5 transition-colors"
             >
-              <span>●</span> Connect Spotify
+              <span>●</span> {t("spotify.connect")}
             </a>
             <div className="text-[10px] text-zinc-600">Logs in through your browser</div>
           </div>
@@ -201,7 +203,7 @@ export default function SpotifyPanel() {
                   {!playing && <div className="mt-1 text-[10px] text-zinc-600 uppercase tracking-wider">Paused</div>}
                 </>
               ) : (
-                <div className="text-[12px] text-zinc-500">Nothing playing right now.</div>
+                <div className="text-[12px] text-zinc-500">{t("spotify.nothingPlaying")}</div>
               )}
               {/* Transport controls — always rendered when connected so the user
                   can hit play even if "nothing is playing" (e.g. after pause). */}
@@ -213,8 +215,8 @@ export default function SpotifyPanel() {
                   type="button"
                   onClick={() => control("previous", "prev")}
                   disabled={!!ctrlBusy}
-                  aria-label="Previous track"
-                  title="Previous"
+                  aria-label={t("spotify.previous")}
+                  title={t("spotify.previous")}
                   className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-zinc-800 hover:text-white disabled:opacity-40 transition-colors"
                 >
                   ⏮
@@ -223,8 +225,8 @@ export default function SpotifyPanel() {
                   type="button"
                   onClick={() => control("toggle", playing ? "pause" : "play")}
                   disabled={!!ctrlBusy}
-                  aria-label={playing ? "Pause" : "Play"}
-                  title={playing ? "Pause" : "Play"}
+                  aria-label={playing ? t("spotify.pause") : t("spotify.play")}
+                  title={playing ? t("spotify.pause") : t("spotify.play")}
                   className="w-11 h-11 rounded-full flex items-center justify-center bg-emerald-600 hover:bg-emerald-500 text-zinc-950 text-lg disabled:opacity-40 transition-colors"
                 >
                   {ctrlBusy === "play" || ctrlBusy === "pause" ? "…" : playing ? "⏸" : "▶"}
@@ -233,8 +235,8 @@ export default function SpotifyPanel() {
                   type="button"
                   onClick={() => control("next", "next")}
                   disabled={!!ctrlBusy}
-                  aria-label="Next track"
-                  title="Next"
+                  aria-label={t("spotify.next")}
+                  title={t("spotify.next")}
                   className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-zinc-800 hover:text-white disabled:opacity-40 transition-colors"
                 >
                   ⏭

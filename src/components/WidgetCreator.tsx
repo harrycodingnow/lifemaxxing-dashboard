@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useT } from "@/lib/i18n";
 
 type Props = {
   onCreated: () => void; // called after a widget is generated + persisted
@@ -12,16 +13,6 @@ type Props = {
   inline?: boolean;
 };
 
-const EXAMPLES = [
-  "a pomodoro timer",
-  "countdown to my birthday Nov 7",
-  "a tip splitter calculator",
-  "world clocks for Taipei, NYC, London",
-  "a dice roller",
-  "a breathing exercise animation",
-  "a markdown scratchpad",
-];
-
 // Inline ✨ icon that sits in the dashboard's input-row alongside the mic and
 // auto-save toggles. Clicking it pops a small "Make me…" pill anchored above
 // the icon (so it doesn't squeeze the chat input). Submit calls
@@ -30,20 +21,13 @@ const EXAMPLES = [
 // inline=false falls back to the original bottom-right floating FAB for any
 // other surface that may still want it.
 export default function WidgetCreator({ onCreated, inline = true }: Props) {
+  const { t } = useT();
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [exampleIdx, setExampleIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
-
-  // Rotate the placeholder example while idle.
-  useEffect(() => {
-    if (!open || text) return;
-    const id = setInterval(() => setExampleIdx((i) => (i + 1) % EXAMPLES.length), 2600);
-    return () => clearInterval(id);
-  }, [open, text]);
 
   useEffect(() => {
     if (open) inputRef.current?.focus();
@@ -95,9 +79,9 @@ export default function WidgetCreator({ onCreated, inline = true }: Props) {
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          aria-label="Generate a widget with AI"
+          aria-label={t("creator.title")}
           aria-expanded={open}
-          title="Generate a widget with AI"
+          title={t("creator.title")}
           className={`rounded-full w-8 h-8 flex items-center justify-center text-sm transition-colors ${
             open
               ? "bg-violet-500/20 text-violet-200"
@@ -131,7 +115,7 @@ export default function WidgetCreator({ onCreated, inline = true }: Props) {
                   }
                 }}
                 disabled={busy}
-                placeholder={busy ? "Hermes is building it…" : `Make me ${EXAMPLES[exampleIdx]}…`}
+                placeholder={busy ? t("creator.generating") : t("creator.placeholder")}
                 className="flex-1 min-w-0 bg-transparent text-[14px] text-zinc-100 placeholder-zinc-500 focus:outline-none disabled:opacity-60"
               />
               <button
@@ -140,7 +124,7 @@ export default function WidgetCreator({ onCreated, inline = true }: Props) {
                 disabled={busy || !text.trim()}
                 className="shrink-0 rounded-full bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-50 text-[13px] font-medium px-3 py-1 transition-colors"
               >
-                {busy ? "…" : "Build"}
+                {busy ? "…" : t("creator.generate")}
               </button>
             </div>
           </div>
@@ -182,7 +166,7 @@ export default function WidgetCreator({ onCreated, inline = true }: Props) {
               if (e.key === "Escape") { setOpen(false); setError(null); }
             }}
             disabled={busy}
-            placeholder={busy ? "Hermes is building it…" : `Make me ${EXAMPLES[exampleIdx]}…`}
+            placeholder={busy ? t("creator.generating") : t("creator.placeholder")}
             className="flex-1 min-w-0 bg-transparent text-[14px] text-zinc-100 placeholder-zinc-500 focus:outline-none disabled:opacity-60"
           />
           <button
@@ -190,12 +174,12 @@ export default function WidgetCreator({ onCreated, inline = true }: Props) {
             disabled={busy || !text.trim()}
             className="shrink-0 rounded-full bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-50 text-[13px] font-medium px-3 py-1 transition-colors"
           >
-            {busy ? "…" : "Build"}
+            {busy ? "…" : t("creator.generate")}
           </button>
           <button
             onClick={() => { setOpen(false); setError(null); }}
             className="shrink-0 text-zinc-500 hover:text-zinc-200 px-1.5"
-            title="Close"
+            title={t("review.close")}
           >
             ✕
           </button>
@@ -203,7 +187,7 @@ export default function WidgetCreator({ onCreated, inline = true }: Props) {
       ) : (
         <button
           onClick={() => setOpen(true)}
-          title="Generate a widget with AI"
+          title={t("creator.title")}
           className="h-12 w-12 rounded-full bg-violet-600 hover:bg-violet-500 text-zinc-50 text-2xl leading-none shadow-2xl shadow-violet-900/40 flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
         >
           +

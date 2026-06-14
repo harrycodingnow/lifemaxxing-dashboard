@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { DEMO_EVENT } from "@/lib/demo-data";
+import { useT } from "@/lib/i18n";
 
 type WeatherHour = {
   iso: string;
@@ -45,6 +46,7 @@ type Weather = {
 const LS_KEY = "weatherPlace";
 
 export default function WeatherPanel() {
+  const { t } = useT();
   const [place, setPlace] = useState("Taipei");
   const [data, setData] = useState<Weather | null>(null);
   const [loading, setLoading] = useState(false);
@@ -121,7 +123,7 @@ export default function WeatherPanel() {
   return (
     <div className="h-full flex flex-col min-h-0 px-3 py-2">
       <div className="flex items-center justify-between mb-1 shrink-0">
-        <h2 className="text-[11px] uppercase tracking-widest text-zinc-500">Weather</h2>
+        <h2 className="text-[11px] uppercase tracking-widest text-zinc-500">{t("widget.weather")}</h2>
         {editing ? (
           <input
             autoFocus
@@ -145,12 +147,12 @@ export default function WeatherPanel() {
 
       <div className="flex-1 min-h-0 flex flex-col">
         {loading && !data ? (
-          <div className="flex-1 flex items-center justify-center text-zinc-600 text-[12px]">Loading…</div>
+          <div className="flex-1 flex items-center justify-center text-zinc-600 text-[12px]">{t("common.loading")}</div>
         ) : data && !data.available ? (
           <div className="flex-1 flex flex-col items-center justify-center text-center text-[12px] text-zinc-500 gap-1 px-3">
             <div>🌧️ Couldn’t load weather.</div>
             <div className="text-[11px] text-zinc-600">{data.error?.includes("not found") ? "Location not found — try another city." : "Network issue — will retry."}</div>
-            <button onClick={() => load(place)} className="mt-1 text-amber-400 hover:text-amber-300 text-[11px]">retry</button>
+            <button onClick={() => load(place)} className="mt-1 text-amber-400 hover:text-amber-300 text-[11px]">{t("common.retry")}</button>
           </div>
         ) : cur ? (
           <>
@@ -172,7 +174,7 @@ export default function WeatherPanel() {
               </div>
             </div>
             <div className="flex items-center gap-3 mt-1.5 px-1 text-[11px] text-zinc-500">
-              <span>Feels {cur.feels_like}°</span>
+              <span>{t("weather.feelsLike")} {cur.feels_like}°</span>
               {cur.humidity != null && <span>💧 {cur.humidity}%</span>}
               {cur.wind != null && <span>💨 {Math.round(cur.wind)} km/h</span>}
             </div>
@@ -181,7 +183,7 @@ export default function WeatherPanel() {
             {chart && (
               <div className="mt-auto pt-2" data-testid="weather-rain-chart">
                 <div className="flex items-baseline justify-between text-[10px] text-zinc-500 mb-1 px-0.5">
-                  <span className="uppercase tracking-wider">Rain · today</span>
+                  <span className="uppercase tracking-wider">{t("weather.precip")} · {t("weather.today")}</span>
                   {today?.max_precip_prob != null && (
                     <span className="tabular-nums text-sky-300">peak {today.max_precip_prob}%</span>
                   )}

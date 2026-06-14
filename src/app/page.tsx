@@ -32,6 +32,7 @@ import {
   LIQUID_GLASS_CLASS,
   LIQUID_GLASS_EVENT,
 } from "@/lib/liquid-glass";
+import { useT, setLang } from "@/lib/i18n";
 
 type Position = {
   asset_type: string;
@@ -126,6 +127,7 @@ function newsTone(category?: string) {
 }
 
 export default function Home() {
+  const { t, lang } = useT();
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [queue, setQueue] = useState<string[]>([]);
@@ -343,7 +345,7 @@ export default function Home() {
   }, []);
   const [placeholderIdx, setPlaceholderIdx] = useState(0);
   const PLACEHOLDER_EXAMPLES = [
-    "Log anything, or ask any question…",
+    t("chat.placeholder.default"),
     "bought 5 NVDA @ 880",
     "had a louisa shake + bagel",
     "72.3kg",
@@ -752,9 +754,9 @@ export default function Home() {
   }
 
   const classGroups = [
-    { key: "tw_stock" as const, label: "TW", pill: "TWSE", pillTone: "bg-emerald-900/40 text-emerald-400" },
-    { key: "us_stock" as const, label: "US", pill: "NYSE/NDQ", pillTone: "bg-emerald-900/40 text-emerald-400" },
-    { key: "crypto" as const, label: "Crypto", pill: "24/7", pillTone: "bg-blue-900/40 text-blue-400" },
+    { key: "tw_stock" as const, label: lang === "zh" ? "台股" : "TW", pill: "TWSE", pillTone: "bg-emerald-900/40 text-emerald-400" },
+    { key: "us_stock" as const, label: lang === "zh" ? "美股" : "US", pill: "NYSE/NDQ", pillTone: "bg-emerald-900/40 text-emerald-400" },
+    { key: "crypto" as const, label: lang === "zh" ? "加密" : "Crypto", pill: "24/7", pillTone: "bg-blue-900/40 text-blue-400" },
   ];
 
   // Build marquee items (top headline + tickers + streaks + DCA countdown)
@@ -1006,8 +1008,8 @@ export default function Home() {
           </div>
           <button
             onClick={() => setDemoMode(!demoMode)}
-            title={demoMode ? "Demo mode ON — showing mock data (not your real data). Click to turn off." : "Demo mode — fill the dashboard with realistic mock data for screenshots. Nothing is written to your database."}
-            aria-label={demoMode ? "Disable demo mode" : "Enable demo mode"}
+            title={demoMode ? t("nav.demo.on") : t("nav.demo.off")}
+            aria-label={demoMode ? t("nav.demo.disable") : t("nav.demo.enable")}
             className={`ml-1 inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[12px] transition-colors ${
               demoMode
                 ? "border-fuchsia-700/60 bg-fuchsia-950/40 text-fuchsia-300 hover:bg-fuchsia-900/40"
@@ -1015,17 +1017,13 @@ export default function Home() {
             }`}
           >
             {demoMode && <span className="inline-block h-1.5 w-1.5 rounded-full bg-fuchsia-400 animate-pulse" />}
-            Demo
+            {t("nav.demo.label")}
           </button>
           <button
             onClick={() => setLiquidGlassEnabled(!glass)}
             data-testid="liquid-glass-toggle"
-            title={
-              glass
-                ? "Liquid Glass ON — iOS-26-style frosted material. Click to switch back to the default dark theme."
-                : "Liquid Glass — re-skin the entire dashboard with an iOS-26-style frosted glass material."
-            }
-            aria-label={glass ? "Disable Liquid Glass theme" : "Enable Liquid Glass theme"}
+            title={glass ? t("nav.glass.on") : t("nav.glass.off")}
+            aria-label={glass ? t("nav.glass.disable") : t("nav.glass.enable")}
             aria-pressed={glass}
             className={`ml-1 inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[12px] transition-colors ${
               glass
@@ -1035,7 +1033,18 @@ export default function Home() {
           >
             {glass && <span className="inline-block h-1.5 w-1.5 rounded-full bg-sky-300 animate-pulse" />}
             <span aria-hidden>◎</span>
-            Glass
+            {t("nav.glass.label")}
+          </button>
+          <button
+            onClick={() => setLang(lang === "zh" ? "en" : "zh")}
+            data-testid="lang-toggle"
+            title={t("nav.lang.toggle")}
+            aria-label={t("nav.lang.toggle")}
+            className="ml-1 inline-flex items-center gap-1 rounded-md border border-zinc-700 text-zinc-400 hover:bg-zinc-800 px-2 py-0.5 text-[12px] tabular-nums"
+          >
+            <span className={lang === "en" ? "text-zinc-100" : "text-zinc-500"}>EN</span>
+            <span className="text-zinc-700">/</span>
+            <span className={lang === "zh" ? "text-zinc-100" : "text-zinc-500"}>中</span>
           </button>
         </div>
       </header>
@@ -1045,7 +1054,7 @@ export default function Home() {
         specs={[
         {
           id: "portfolio",
-          title: "Portfolio",
+          title: t("widget.portfolio"),
           defaultLayout: { x: 0, y: 0, w: 12, h: 3 },
           dockable: true,
           render: () => (
@@ -1055,9 +1064,9 @@ export default function Home() {
             type="button"
             onClick={() => setHoldingsView("all")}
             className="shrink-0 text-left rounded-md px-1 -mx-1 hover:bg-zinc-800/60 transition-colors"
-            title="Show all holdings"
+            title={t("portfolio.total")}
           >
-            <div className="text-[11px] uppercase tracking-wider text-zinc-500 flex items-center gap-1">Portfolio <span className="text-zinc-600">▾</span></div>
+            <div className="text-[11px] uppercase tracking-wider text-zinc-500 flex items-center gap-1">{t("widget.portfolio")} <span className="text-zinc-600">▾</span></div>
             <div className="text-3xl font-semibold leading-tight">
               <FlipNumber value={fmtMoney(totalsToDisplay(portfolio?.totals.market_value_usd), displayCcy)} />
             </div>
@@ -1079,7 +1088,7 @@ export default function Home() {
               const todayPct = todayPctDen > 0 ? todayPctNum / todayPctDen : null;
               return (
                 <div className={`text-[13px] leading-tight ${colorPnl(haveAny ? todayUsd : null)}`}>
-                  <FlipNumber value={haveAny ? `${fmtMoney(totalsToDisplay(todayUsd), displayCcy)} (${fmtPct(todayPct)}) today` : "—"} />
+                  <FlipNumber value={haveAny ? `${fmtMoney(totalsToDisplay(todayUsd), displayCcy)} (${fmtPct(todayPct)}) ${t("portfolio.today")}` : "—"} />
                 </div>
               );
             })()}
@@ -1105,14 +1114,14 @@ export default function Home() {
                   type="button"
                   onClick={() => setHoldingsView(g.key)}
                   className="text-left rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 hover:bg-zinc-800/80 hover:border-zinc-700 transition-colors"
-                  title={`Show ${g.label} holdings`}
+                  title={g.label}
                 >
                   <div className="flex items-center justify-between text-[12px] text-zinc-500">
                     <span className="flex items-center gap-1">{g.label} <span className="text-zinc-600">▾</span></span>
-                    <span>{rows.length} pos</span>
+                    <span>{t("portfolio.positions", { n: rows.length })}</span>
                   </div>
                   <div className="text-lg font-semibold tabular-nums"><FlipNumber value={fmtMoney(mv || null, displayCcy)} /></div>
-                  <div className={`text-[12px] ${colorPnl(today)}`}>{today != null ? <><FlipNumber value={fmtPct(today)} /> today</> : "—"}</div>
+                  <div className={`text-[12px] ${colorPnl(today)}`}>{today != null ? <><FlipNumber value={fmtPct(today)} /> {t("portfolio.today")}</> : "—"}</div>
                 </button>
               );
             })}
@@ -1122,7 +1131,7 @@ export default function Home() {
         },
         {
           id: "nutrition",
-          title: "Nutrition",
+          title: t("widget.nutrition"),
           defaultLayout: { x: 0, y: 3, w: 6, h: 8 },
           dockable: true,
           render: () => (
@@ -1130,15 +1139,15 @@ export default function Home() {
 
           <div className="flex items-baseline justify-between mb-1.5 shrink-0">
             <h2 className="text-base font-medium text-zinc-200 flex items-center gap-1.5">
-              <span>Nutrition ·</span>
+              <span>{t("widget.nutrition")} ·</span>
               <button
                 onClick={() => shiftNutritionDay(-1)}
                 className="px-1 text-zinc-500 hover:text-zinc-200"
-                title="Previous day"
-                aria-label="Previous day"
+                title={lang === "zh" ? "前一天" : "Previous day"}
+                aria-label={lang === "zh" ? "前一天" : "Previous day"}
               >‹</button>
-              <label className="relative cursor-pointer hover:text-white" title="Pick date">
-                <span>{isToday ? "today" : nutritionDay}</span>
+              <label className="relative cursor-pointer hover:text-white" title={lang === "zh" ? "選擇日期" : "Pick date"}>
+                <span>{isToday ? t("nutrition.today") : nutritionDay}</span>
                 <input
                   type="date"
                   value={nutritionDay}
@@ -1151,15 +1160,15 @@ export default function Home() {
                 onClick={() => shiftNutritionDay(1)}
                 disabled={isToday}
                 className="px-1 text-zinc-500 hover:text-zinc-200 disabled:opacity-30 disabled:cursor-not-allowed"
-                title="Next day"
-                aria-label="Next day"
+                title={lang === "zh" ? "後一天" : "Next day"}
+                aria-label={lang === "zh" ? "後一天" : "Next day"}
               >›</button>
               {!isToday && (
                 <button
                   onClick={() => setNutritionDay(todayStr())}
                   className="ml-1 text-[11px] text-zinc-500 hover:text-zinc-200 px-1.5 py-0.5 rounded border border-zinc-800 hover:border-zinc-600"
-                  title="Jump to today"
-                >today</button>
+                  title={lang === "zh" ? "跳到今天" : "Jump to today"}
+                >{t("nutrition.today")}</button>
               )}
             </h2>
             <div className="flex items-center gap-2">
@@ -1171,16 +1180,16 @@ export default function Home() {
                 const over = left < 0;
                 return (
                   <span className={`text-[12px] ${over ? "text-amber-400" : "text-zinc-400"}`} title={`${eaten} / ${goal} kcal`}>
-                    {over ? `+${Math.abs(left)} over` : `${left} kcal left`}
+                    {over ? (lang === "zh" ? `超出 ${Math.abs(left)}` : `+${Math.abs(left)} over`) : t("nutrition.kcalLeft", { n: left })}
                   </span>
                 );
               })()}
               <button
                 onClick={() => setEditing("meals")}
                 className="text-[12px] text-zinc-500 hover:text-zinc-200 px-1.5 py-0.5 rounded border border-zinc-800 hover:border-zinc-600"
-                title="Edit meals"
+                title={lang === "zh" ? "編輯餐點" : "Edit meals"}
               >
-                ✎ meals
+                ✎ {t("nutrition.meals")}
               </button>
               <button
                 onClick={() => {
@@ -1194,15 +1203,15 @@ export default function Home() {
                   setEditGoals(true);
                 }}
                 className="text-[12px] text-zinc-500 hover:text-zinc-200 px-1.5 py-0.5 rounded border border-zinc-800 hover:border-zinc-600"
-                title="Edit daily goals"
+                title={lang === "zh" ? "編輯每日目標" : "Edit daily goals"}
               >
-                ⚙ goals
+                ⚙ {t("nutrition.goals")}
               </button>
             </div>
           </div>
           <div className="grid grid-cols-4 gap-1.5 shrink-0">
             {(["calories", "protein_g", "carbs_g", "fat_g"] as const).map((k) => {
-              const label = k === "calories" ? "kcal" : k === "protein_g" ? "P" : k === "carbs_g" ? "C" : "F";
+              const label = k === "calories" ? t("nutrition.kcal") : k === "protein_g" ? t("nutrition.protein") : k === "carbs_g" ? t("nutrition.carbs") : t("nutrition.fat");
               const cur = totals?.[k] ?? 0;
               const goal = goals?.[k] ?? 1;
               const pct = Math.min(100, (cur / goal) * 100);
@@ -1259,7 +1268,7 @@ export default function Home() {
         },
         {
           id: "weight",
-          title: "Weight",
+          title: t("widget.weight"),
           defaultLayout: { x: 6, y: 3, w: 6, h: 8 },
           dockable: true,
           render: () => (
@@ -1267,11 +1276,11 @@ export default function Home() {
 
           <div className="flex items-center justify-between mb-1 shrink-0">
             <div className="flex items-center gap-2">
-              <h2 className="text-base font-medium text-zinc-200">Weight</h2>
+              <h2 className="text-base font-medium text-zinc-200">{t("widget.weight")}</h2>
               <button
                 onClick={() => setEditing("weights")}
                 className="text-[11px] text-zinc-500 hover:text-zinc-200 px-1.5 py-0.5 rounded border border-zinc-800 hover:border-zinc-600"
-                title="Edit weigh-ins"
+                title={lang === "zh" ? "編輯體重紀錄" : "Edit weigh-ins"}
               >✎</button>
             </div>
             <div className="flex items-center gap-2">
@@ -1282,7 +1291,7 @@ export default function Home() {
                 <div className={`text-[12px] leading-tight ${colorPnl(weight?.stats.delta_kg != null ? -(weight.stats.delta_kg) : null)}`}>
                   {weight?.stats.delta_kg != null
                     ? `${weight.stats.delta_kg >= 0 ? "+" : ""}${weight.stats.delta_kg.toFixed(1)} kg / ${weight.range_days}d`
-                    : "no data"}
+                    : (lang === "zh" ? "無資料" : "no data")}
                 </div>
               </div>
               <select
@@ -1364,7 +1373,7 @@ export default function Home() {
         },
         {
           id: "projects",
-          title: "Projects",
+          title: t("widget.projects"),
           defaultLayout: { x: 0, y: 11, w: 12, h: 8 },
           dockable: true,
           render: () => (
@@ -1372,24 +1381,24 @@ export default function Home() {
 
           <div className="flex items-baseline justify-between mb-1.5 shrink-0">
             <div className="flex items-baseline gap-2">
-              <h2 className="text-[11px] uppercase tracking-widest text-zinc-500">Projects</h2>
+              <h2 className="text-[11px] uppercase tracking-widest text-zinc-500">{t("widget.projects")}</h2>
               <span className="text-[10px] text-zinc-600">
-                {projects.length} active
+                {t("projects.active", { n: projects.length })}
               </span>
             </div>
             <button
               type="button"
               onClick={() => setEditingProject("new")}
               className="text-[11px] text-zinc-400 hover:text-zinc-100 border border-zinc-800 hover:border-zinc-600 rounded px-2 py-0.5"
-              title="Add project"
+              title={lang === "zh" ? "新增專案" : "Add project"}
             >
-              + add
+              + {t("common.add")}
             </button>
           </div>
           <div className="flex-1 overflow-y-auto -mx-1 px-1">
             {projects.length === 0 ? (
               <div className="h-full flex items-center justify-center text-zinc-600 text-[12px]">
-                No projects yet. Click <span className="mx-1 text-zinc-400">+ add</span> to track one.
+                {lang === "zh" ? "目前沒有專案。點 " : "No projects yet. Click "}<span className="mx-1 text-zinc-400">+ {t("common.add")}</span>{lang === "zh" ? " 來追蹤一個。" : " to track one."}
               </div>
             ) : (
               <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(180px,1fr))]">
@@ -1423,10 +1432,10 @@ export default function Home() {
                       </div>
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className={`text-[9px] uppercase tracking-wider rounded border px-1.5 py-0.5 ${phaseTone[p.phase] ?? phaseTone.idea}`}>
-                          {p.phase}
+                          {t(`projects.phase.${p.phase}` as never) || p.phase}
                         </span>
                         <span className={`text-[10px] ${statusTone[p.status] ?? "text-zinc-400"}`}>
-                          {p.status.replace("_", " ")}
+                          {t(`projects.status.${p.status}` as never) || p.status.replace("_", " ")}
                         </span>
                       </div>
                       {p.current_problem && (
@@ -1450,7 +1459,7 @@ export default function Home() {
         },
         {
           id: "news",
-          title: "📰 News",
+          title: t("widget.news"),
           defaultLayout: { x: 0, y: 19, w: 6, h: 6 },
           dockable: true,
           defaultDocked: true,
@@ -1528,7 +1537,7 @@ export default function Home() {
         },
         {
           id: "todos",
-          title: "Todos",
+          title: t("widget.todos"),
           defaultLayout: { x: 6, y: 19, w: 6, h: 6 },
           dockable: true,
           defaultDocked: true,
@@ -1598,7 +1607,7 @@ export default function Home() {
       />
 
       {/* Pinned input row */}
-      <div className="shrink-0 px-2 pb-2 pt-1 flex flex-col items-center gap-1">
+      <div className="shrink-0 px-2 pb-6 pt-1 flex flex-col items-center gap-1">
 
           {answer && (
             <div
@@ -1607,7 +1616,7 @@ export default function Home() {
             >
               <div className="flex items-center justify-between gap-2 mb-1">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-[10px] uppercase tracking-widest text-emerald-400 shrink-0">Q</span>
+                  <span className="text-[10px] uppercase tracking-widest text-emerald-400 shrink-0">{t("answer.q")}</span>
                   <span className="truncate text-zinc-300" title={answer.question}>{answer.question}</span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
@@ -1616,16 +1625,16 @@ export default function Home() {
                       type="button"
                       onClick={() => setAnswerSqlOpen((v) => !v)}
                       className="text-[10px] text-zinc-500 hover:text-zinc-200 border border-zinc-800 hover:border-zinc-600 rounded px-1.5 py-0.5"
-                      title={answerSqlOpen ? "Hide SQL" : "Show SQL"}
+                      title={answerSqlOpen ? t("answer.hideSql") : t("answer.showSql")}
                     >
-                      {answerSqlOpen ? "hide SQL" : "show SQL"}
+                      {answerSqlOpen ? t("answer.hideSql") : t("answer.showSql")}
                     </button>
                   )}
                   <button
                     type="button"
                     onClick={() => setAnswer(null)}
                     className="text-zinc-500 hover:text-zinc-200 text-sm leading-none px-1"
-                    title="Dismiss"
+                    title={t("answer.dismiss")}
                   >
                     ✕
                   </button>
@@ -1648,7 +1657,7 @@ export default function Home() {
                   )}
                 </div>
               ) : answer.rows.length === 0 ? (
-                <div className="text-zinc-500 italic">No rows.</div>
+                <div className="text-zinc-500 italic">{t("answer.rows.zero")}</div>
               ) : (
                 <>
                   {answer.explanation && (
@@ -1677,8 +1686,8 @@ export default function Home() {
                     </table>
                   </div>
                   <div className="text-[10px] text-zinc-500 mt-1">
-                    {answer.row_count} row{answer.row_count === 1 ? "" : "s"}
-                    {answer.truncated && <span className="text-amber-400"> · truncated at cap</span>}
+                    {t(answer.row_count === 1 ? "answer.rows.count" : "answer.rows.countPlural", { n: answer.row_count ?? 0 })}
+                    {answer.truncated && <span className="text-amber-400"> · {t("answer.truncated")}</span>}
                   </div>
                 </>
               )}
@@ -1689,7 +1698,7 @@ export default function Home() {
                   {answer.params && answer.params.length > 0 && (
                     <>
                       {"\n"}
-                      <span className="text-zinc-500">params: </span>
+                      <span className="text-zinc-500">{t("answer.paramsLabel")} </span>
                       {JSON.stringify(answer.params)}
                     </>
                   )}
@@ -1757,8 +1766,8 @@ export default function Home() {
                 });
               }}
               disabled={busy}
-              aria-label={autoConfirm ? "Disable auto-save" : "Enable auto-save"}
-              title={autoConfirm ? "Auto-save ON — click to require confirmation" : "Auto-save OFF — click to skip confirmation popups"}
+              aria-label={autoConfirm ? t("chat.autoSave.disable") : t("chat.autoSave.enable")}
+              title={autoConfirm ? t("chat.autoSave.on") : t("chat.autoSave.off")}
               className={`rounded-full w-8 h-8 flex items-center justify-center text-sm transition-colors ${
                 autoConfirm ? "bg-amber-500/20 text-amber-300" : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800"
               }`}
@@ -1775,12 +1784,12 @@ export default function Home() {
               {busy ? (
                 <>
                   <span className="inline-block w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" aria-hidden />
-                  <span>{queue.length > 0 ? `Queue +${queue.length}` : "Parsing…"}</span>
+                  <span>{queue.length > 0 ? `Queue +${queue.length}` : t("chat.parsing")}</span>
                 </>
               ) : queue.length > 0 ? (
                 `Queue +${queue.length}`
               ) : (
-                "Send"
+                t("chat.send")
               )}
             </button>
           </div>

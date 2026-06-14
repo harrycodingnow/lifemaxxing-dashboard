@@ -34,7 +34,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script
           // eslint-disable-next-line react/no-danger
           dangerouslySetInnerHTML={{
-            __html: `try{if(localStorage.getItem('lifemax.liquidGlass')==='1'){document.documentElement.classList.add('liquid-glass');}}catch(e){}`,
+            __html: `try{if(localStorage.getItem('lifemax.liquidGlass')==='1'){document.documentElement.classList.add('liquid-glass');}var L=localStorage.getItem('lifemax.lang');if(L==='zh'||L==='en'){document.documentElement.setAttribute('lang',L==='zh'?'zh-Hant':'en');}}catch(e){}`,
           }}
         />
       </head>

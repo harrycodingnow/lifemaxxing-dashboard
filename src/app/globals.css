@@ -64,17 +64,17 @@ body {
 
 /* Animated backdrop on <html> + a fixed blurred mesh layer over <body> for
    the "wallpaper behind frosted glass" effect that defines the look. */
-html.liquid-glass {
+html.liquid-glass,
+html.liquid-glass body {
   background:
     radial-gradient(120% 90% at 10% 0%,   rgba(255, 160, 220, 0.45) 0%, transparent 55%),
     radial-gradient(110% 80% at 90% 20%,  rgba(120, 190, 255, 0.45) 0%, transparent 55%),
     radial-gradient(100% 100% at 60% 100%,rgba(255, 200, 120, 0.45) 0%, transparent 55%),
     radial-gradient(80% 80% at 0% 100%,   rgba(140, 255, 200, 0.40) 0%, transparent 60%),
-    linear-gradient(180deg, #08060c 0%, #050308 100%);
+    linear-gradient(180deg, #08060c 0%, #050308 100%) !important;
 }
 html.liquid-glass body {
   position: relative;
-  background: transparent !important;
 }
 html.liquid-glass body::before {
   content: "";
