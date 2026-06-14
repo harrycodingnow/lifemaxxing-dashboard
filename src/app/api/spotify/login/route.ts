@@ -22,11 +22,24 @@ export async function GET(req: NextRequest) {
       { status: 503 },
     );
   }
-  const url = new URL(req.url);
-  if (url.hostname === "localhost") {
-    const bounce = new URL(url.toString());
-    bounce.hostname = "127.0.0.1";
-    return NextResponse.redirect(bounce);
+
+  // Detect the hostname the browser ACTUALLY used. Under Next 16's dev server
+  // `new URL(req.url).hostname` is unreliable (often returns "localhost" even
+  // when the request hit 127.0.0.1, which previously caused an infinite
+  // redirect loop). The Host header is what the client sent — trust that.
+  const hostHeader = req.headers.get("host") || "";
+  const hostOnly = hostHeader.split(":")[0].toLowerCase();
+  if (hostOnly === "localhost") {
+    // Forward to 127.0.0.1 once so the OAuth state cookie set below lives on
+    // the same host as the callback (Spotify's redirect URI is 127.0.0.1).
+    const target = new URL(req.url);
+    target.hostname = "127.0.0.1";
+    // If req.url's hostname was already 127.0.0.1 (proxying weirdness), bail
+    // out of the redirect to avoid a loop.
+    if (target.hostname !== "127.0.0.1") {
+      return NextResponse.json({ error: "could not rewrite hostname" }, { status: 500 });
+    }
+    return NextResponse.redirect(target);
   }
 
   const state = crypto.randomBytes(16).toString("hex");

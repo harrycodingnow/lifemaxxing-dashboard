@@ -142,12 +142,137 @@ function mockSubscriptions() {
 function mockHabits() {
   const today = todayYmd();
   const defs = [
-    { id: 1, name: "meditate", emoji: "🧘", streak: 12, longest: 28, done_last_7: 7, done_last_30: 26, today_status: "done", total_done: 84 },
-    { id: 2, name: "gym", emoji: "🏋️", streak: 3, longest: 14, done_last_7: 4, done_last_30: 18, today_status: "done", total_done: 52 },
-    { id: 3, name: "reading", emoji: "📚", streak: 0, longest: 9, done_last_7: 3, done_last_30: 12, today_status: null, total_done: 31 },
-    { id: 4, name: "no late-night snack", emoji: "🌙", streak: 5, longest: 11, done_last_7: 5, done_last_30: 20, today_status: "skip", total_done: 40 },
+    { id: 1, name: "meditate",          emoji: "🧘",  streak: 12, longest: 28, done_last_7: 7, done_last_30: 26, today_status: "done", total_done: 84 },
+    { id: 2, name: "gym",               emoji: "🏋️", streak: 3,  longest: 14, done_last_7: 4, done_last_30: 18, today_status: "done", total_done: 52 },
+    { id: 3, name: "reading",           emoji: "📚",  streak: 0,  longest: 9,  done_last_7: 3, done_last_30: 12, today_status: null,   total_done: 31 },
+    { id: 4, name: "no late-night snack", emoji: "🌙", streak: 5,  longest: 11, done_last_7: 5, done_last_30: 20, today_status: "skip", total_done: 40 },
+    { id: 5, name: "Chinese practice",  emoji: "🀄",  streak: 9,  longest: 18, done_last_7: 6, done_last_30: 23, today_status: "done", total_done: 67 },
+    { id: 6, name: "8h sleep",          emoji: "😴",  streak: 2,  longest: 16, done_last_7: 4, done_last_30: 19, today_status: null,   total_done: 48 },
+    { id: 7, name: "10k steps",         emoji: "👟",  streak: 14, longest: 30, done_last_7: 7, done_last_30: 27, today_status: "done", total_done: 91 },
+    { id: 8, name: "creatine + protein",emoji: "💊",  streak: 21, longest: 42, done_last_7: 7, done_last_30: 28, today_status: "done", total_done: 120 },
   ];
   return { rows: defs.map((d) => ({ created_ts: daysAgo(90), updated_ts: now(), archived_at: null, sort_order: d.id, ...d })), today_ymd: today };
+}
+
+// Projects: a believable mix of phases/statuses across both code projects
+// and life projects. Matches the shape /api/projects returns (rows).
+function mockProjects() {
+  const proj = (
+    id: number,
+    name: string,
+    phase: "idea" | "planning" | "building" | "shipping" | "maintaining" | "paused" | "done",
+    status: "on_track" | "at_risk" | "blocked" | "done",
+    priority: number,
+    current_problem: string | null,
+    next_step: string | null,
+    description: string | null = null,
+    url: string | null = null,
+  ) => ({
+    id,
+    created_ts: daysAgo(60 - id * 3),
+    updated_ts: daysAgo(id % 5),
+    name,
+    description,
+    phase,
+    status,
+    current_problem,
+    next_step,
+    priority,
+    url,
+    sort_order: id,
+    archived_at: null,
+  });
+  const rows = [
+    proj(
+      1,
+      "Lifemaxxing dashboard",
+      "building",
+      "on_track",
+      3,
+      "Hydration warnings from Grammarly extension",
+      "Ship Spotify control + weather chart, then push v0.2",
+      "Personal HUD: portfolio, nutrition, habits, Spotify, weather, projects.",
+      "https://github.com/harrycodingnow/lifemaxxing-dashboard",
+    ),
+    proj(
+      2,
+      "CrossView (MultiSource iOS)",
+      "shipping",
+      "at_risk",
+      3,
+      "PostgREST URI length limit on .in_() with 100+ UUIDs",
+      "Chunk lookups via _chunked(ids, 50), bump PROMPT_VERSION",
+      "iOS app that clusters news across sources and surfaces multi-perspective stories.",
+      null,
+    ),
+    proj(
+      3,
+      "Hermes Agent skills",
+      "maintaining",
+      "on_track",
+      2,
+      null,
+      "Add macos-spotlight-launcher polish + dogfood across 3 workflows",
+      "Personal AI agent toolkit (skills, plugins, voice, gateway).",
+      null,
+    ),
+    proj(
+      4,
+      "Pitch deck v3",
+      "planning",
+      "on_track",
+      2,
+      "Need clearer 'why now' slide — investors keep asking",
+      "Draft 3 variants and run them past Anny by Friday",
+      "Seed-round investor deck for the AI HUD startup idea.",
+      null,
+    ),
+    proj(
+      5,
+      "Apartment hunt",
+      "idea",
+      "on_track",
+      1,
+      null,
+      "List top 5 neighborhoods and budget bands",
+      "Lease ends in 6 months; explore Da'an / Xinyi options.",
+      null,
+    ),
+    proj(
+      6,
+      "LeetCode 100 streak",
+      "building",
+      "blocked",
+      2,
+      "Stuck on DP — passed easy/medium but hard problems are draining",
+      "Schedule 30-min daily window 7am, alternate DP / Graph",
+      "Re-build interview-grade fluency before Q3.",
+      null,
+    ),
+    proj(
+      7,
+      "Songwriting EP",
+      "paused",
+      "on_track",
+      1,
+      null,
+      "Pick back up after the demo ships",
+      "5-track lo-fi EP (Suno + live vocals).",
+      null,
+    ),
+    proj(
+      8,
+      "Open Hermes plugins shop",
+      "idea",
+      "on_track",
+      1,
+      null,
+      "Sketch a 1-pager monetization story",
+      "Curated, community-friendly plugin marketplace for Hermes.",
+      null,
+    ),
+  ];
+  return { rows };
 }
 
 function mockCash() {
@@ -331,6 +456,7 @@ function routeMock(pathname: string, search: URLSearchParams): unknown | undefin
   if (pathname === "/api/networth") return mockNetworth();
   if (pathname === "/api/subscriptions") return mockSubscriptions();
   if (pathname === "/api/habits") return mockHabits();
+  if (pathname === "/api/projects") return mockProjects();
   if (pathname === "/api/cash") return mockCash();
   if (pathname === "/api/liabilities") return mockLiabilities();
   if (pathname === "/api/todos") return mockTodos();
