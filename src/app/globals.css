@@ -37,7 +37,7 @@ body {
   letter-spacing: -0.01em;
 }
 
-/* Spotify spinning CD/vinyl */
+/* Spotify spinning disc (just the album art spins now — no vinyl wrapper) */
 @keyframes cd-spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
@@ -47,15 +47,6 @@ body {
 }
 .cd-spin.paused {
   animation-play-state: paused;
-}
-/* Vinyl grooves + label hole, layered under the album art */
-.cd-vinyl {
-  background:
-    repeating-radial-gradient(circle at 50% 50%, rgba(255,255,255,0.05) 0px, rgba(255,255,255,0.05) 1px, transparent 1px, transparent 4px),
-    radial-gradient(circle at 50% 50%, #18181b 0%, #09090b 70%, #000 100%);
-}
-.cd-sheen {
-  background: conic-gradient(from 0deg, rgba(255,255,255,0) 0deg, rgba(255,255,255,0.10) 40deg, rgba(255,255,255,0) 90deg, rgba(255,255,255,0) 180deg, rgba(255,255,255,0.08) 220deg, rgba(255,255,255,0) 270deg);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

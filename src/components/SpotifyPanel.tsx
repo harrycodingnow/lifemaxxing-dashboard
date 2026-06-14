@@ -109,33 +109,28 @@ export default function SpotifyPanel() {
   const duration = now?.duration_ms ?? null;
   const pct = duration && duration > 0 ? Math.min(100, (progress / duration) * 100) : 0;
 
-  // ── Disc (always rendered; art when available, vinyl otherwise) ──
+  // ── Disc: spin ONLY the album art, no black vinyl backdrop ──
+  // (The earlier "vinyl + sheen + spindle hole" wrapper looked busy and the
+  // user asked us to spin just the album art itself.)
   const disc = (
     <div className="relative shrink-0" style={{ width: 132, height: 132 }}>
-      <div
-        className={`cd-vinyl absolute inset-0 rounded-full shadow-2xl shadow-black/60 ${playing ? "cd-spin" : "cd-spin paused"}`}
-        style={{ willChange: "transform" }}
-      >
-        {/* album art ring */}
-        {now?.album_art ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={now.album_art}
-            alt={now.album ?? "album art"}
-            className="absolute rounded-full object-cover"
-            style={{ inset: "18%" }}
-            draggable={false}
-          />
-        ) : (
-          <div className="absolute rounded-full bg-zinc-800 flex items-center justify-center" style={{ inset: "18%" }}>
-            <span className="text-2xl">🎵</span>
-          </div>
-        )}
-        {/* sheen overlay */}
-        <div className="cd-sheen absolute inset-0 rounded-full pointer-events-none" />
-        {/* center spindle hole */}
-        <div className="absolute rounded-full bg-zinc-950 border border-zinc-700" style={{ width: 14, height: 14, left: "calc(50% - 7px)", top: "calc(50% - 7px)" }} />
-      </div>
+      {now?.album_art ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={now.album_art}
+          alt={now.album ?? "album art"}
+          className={`absolute inset-0 w-full h-full rounded-full object-cover shadow-2xl shadow-black/60 ${playing ? "cd-spin" : "cd-spin paused"}`}
+          style={{ willChange: "transform" }}
+          draggable={false}
+        />
+      ) : (
+        <div
+          className={`absolute inset-0 rounded-full bg-zinc-800 flex items-center justify-center shadow-2xl shadow-black/60 ${playing ? "cd-spin" : "cd-spin paused"}`}
+          style={{ willChange: "transform" }}
+        >
+          <span className="text-2xl">🎵</span>
+        </div>
+      )}
     </div>
   );
 
