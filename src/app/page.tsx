@@ -844,7 +844,7 @@ export default function Home() {
         <div className="flex-1 min-w-0 px-2">
           <Marquee items={marqueeItems} intervalMs={6000} className="text-zinc-300" />
         </div>
-        <div id="dashboard-dock-slot" className="flex items-center gap-1 shrink-0" />
+        <div id="dashboard-widgets-slot" className="flex items-center gap-1 shrink-0" />
         <div className="relative shrink-0 hidden">
           <button
             onClick={() => setNewsOpen((v) => !v)}

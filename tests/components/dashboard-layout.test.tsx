@@ -2,15 +2,14 @@
 //
 // Tests for src/components/DashboardLayout.tsx
 //
-// We mock `react-grid-layout` (and its CSS imports) so the suite tests our
-// dock/restore/persistence behaviour directly without spinning up the real
-// grid engine (which needs ResizeObserver, getBoundingClientRect with
-// real layout, etc.). The mock keeps the surface area we actually use:
-//   - <ResponsiveGridLayout> renders children inside a tagged div and
-//     exposes onLayoutChange via a hidden button so we can simulate
-//     a user-driven resize/drag.
-//   - useContainerWidth returns a non-zero width immediately so the grid
-//     branch (`mounted && width > 0`) actually mounts.
+// The component now uses a "+ widgets" sidebar trigger (portal-mounted into
+// #dashboard-widgets-slot) and a right-side panel listing every spec; the old
+// dock-pill / park-to-navbar UI is gone. Hidden state persists to
+// lifemax.dashboard.hidden.v1 with a one-time migration from the legacy
+// lifemax.dashboard.dock.v1 key.
+//
+// react-grid-layout itself is mocked so we exercise our state/persistence
+// without spinning up the real grid (which needs ResizeObserver + real layout).
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
@@ -29,7 +28,6 @@ vi.mock("react-grid-layout", () => {
   }) {
     return (
       <div data-testid="rgl-mock">
-        {/* expose a simulator so a test can drive onLayoutChange */}
         <button
           data-testid="rgl-simulate-layout"
           onClick={() =>
@@ -53,7 +51,8 @@ vi.mock("react-grid-layout", () => {
 import { DashboardLayout, type WidgetSpec } from "@/components/DashboardLayout";
 
 const LS_LAYOUT = "lifemax.dashboard.layout.v1";
-const LS_DOCK = "lifemax.dashboard.dock.v1";
+const LS_HIDDEN = "lifemax.dashboard.hidden.v1";
+const LS_LEGACY_DOCK = "lifemax.dashboard.dock.v1";
 
 function makeSpecs(overrides: Partial<WidgetSpec>[] = []): WidgetSpec[] {
   const base: WidgetSpec[] = [
@@ -73,6 +72,7 @@ function makeSpecs(overrides: Partial<WidgetSpec>[] = []): WidgetSpec[] {
       id: "news",
       title: "News",
       defaultLayout: { x: 0, y: 8, w: 6, h: 4 },
+      // exercises the legacy alias on first-mount seed
       defaultDocked: true,
       render: () => <div data-testid="body-news">NEWS BODY</div>,
     },
@@ -84,13 +84,20 @@ function makeSpecs(overrides: Partial<WidgetSpec>[] = []): WidgetSpec[] {
   return base;
 }
 
-// The component renders dock pills via createPortal into #dashboard-dock-slot.
-// Tests must add it to the DOM before rendering.
-function mountDockSlot() {
+// The component portal-mounts the sidebar trigger into a slot in the navbar.
+// Tests must add the slot to the DOM before rendering.
+function mountSlot() {
   const slot = document.createElement("div");
-  slot.id = "dashboard-dock-slot";
+  slot.id = "dashboard-widgets-slot";
   document.body.appendChild(slot);
   return slot;
+}
+
+function openSidebar() {
+  const trigger = screen.getByTestId("widget-sidebar-trigger");
+  act(() => {
+    fireEvent.click(trigger);
+  });
 }
 
 beforeEach(() => {
@@ -98,132 +105,200 @@ beforeEach(() => {
   document.body.innerHTML = "";
 });
 
-describe("DashboardLayout", () => {
-  it("renders non-docked widgets in the grid and shows their bodies", () => {
-    mountDockSlot();
+describe("DashboardLayout — grid + hidden state", () => {
+  it("renders non-hidden widgets in the grid and shows their bodies", () => {
+    mountSlot();
     render(<DashboardLayout specs={makeSpecs()} />);
-    // portfolio + weight are in grid; news is default-docked
     expect(screen.getByTestId("body-portfolio")).toBeInTheDocument();
     expect(screen.getByTestId("body-weight")).toBeInTheDocument();
+    // news starts default-hidden (via legacy defaultDocked alias)
     expect(screen.queryByTestId("body-news")).not.toBeInTheDocument();
   });
 
-  it("seeds dock state from defaultDocked on first mount and persists it", () => {
-    mountDockSlot();
+  it("seeds hidden state from defaultHidden / legacy defaultDocked on first mount", () => {
+    mountSlot();
     render(<DashboardLayout specs={makeSpecs()} />);
-    const persisted = JSON.parse(window.localStorage.getItem(LS_DOCK) || "{}");
+    const persisted = JSON.parse(window.localStorage.getItem(LS_HIDDEN) || "{}");
     expect(persisted).toEqual({ news: true });
   });
 
-  it("renders a dock pill into #dashboard-dock-slot for each docked widget", () => {
-    const slot = mountDockSlot();
+  it("migrates legacy dock.v1 state on first mount when hidden.v1 is absent", () => {
+    mountSlot();
+    window.localStorage.setItem(
+      LS_LEGACY_DOCK,
+      JSON.stringify({ portfolio: true }),
+    );
     render(<DashboardLayout specs={makeSpecs()} />);
-    // News pill should be inside the slot, not loose in the grid tree
-    expect(slot.textContent).toContain("News");
-    expect(slot.querySelector("[draggable]")).not.toBeNull();
+    expect(screen.queryByTestId("body-portfolio")).not.toBeInTheDocument();
+    // News should be visible — legacy state takes precedence over defaultHidden.
+    expect(screen.getByTestId("body-news")).toBeInTheDocument();
+    // The migration also writes hidden.v1 for future runs.
+    const persisted = JSON.parse(window.localStorage.getItem(LS_HIDDEN) || "{}");
+    expect(persisted).toEqual({ portfolio: true });
   });
 
-  it("park button moves a widget from grid to navbar (and persists)", () => {
-    const slot = mountDockSlot();
+  it("persisted hidden state overrides defaultHidden", () => {
+    mountSlot();
+    window.localStorage.setItem(LS_HIDDEN, JSON.stringify({}));
+    render(<DashboardLayout specs={makeSpecs()} />);
+    expect(screen.getByTestId("body-news")).toBeInTheDocument();
+    expect(screen.getByTestId("body-portfolio")).toBeInTheDocument();
+  });
+});
+
+describe("DashboardLayout — widget header hide button", () => {
+  it("hide (✕) button removes a widget from the grid and persists it", () => {
+    mountSlot();
     render(<DashboardLayout specs={makeSpecs()} />);
 
-    // Portfolio starts in grid
     expect(screen.getByTestId("body-portfolio")).toBeInTheDocument();
 
-    const parkButtons = screen.getAllByTitle("Park in navbar");
-    const portfolioParkBtn = parkButtons.find(
-      (b) => b.closest(".react-grid-item, [class*='rounded-xl']")?.textContent?.includes("Portfolio"),
+    const hideButtons = screen.getAllByTitle(/^Hide widget/);
+    const portfolioHideBtn = hideButtons.find(
+      (b) => b.closest("div.flex-col")?.textContent?.includes("Portfolio"),
     );
-    // Fallback if structural lookup fails: just click first park button next to "Portfolio" label
-    const target = portfolioParkBtn ?? parkButtons[0];
+    expect(portfolioHideBtn).toBeDefined();
     act(() => {
-      fireEvent.click(target);
+      fireEvent.click(portfolioHideBtn!);
     });
 
-    // After parking, portfolio body should be gone from grid
     expect(screen.queryByTestId("body-portfolio")).not.toBeInTheDocument();
-    // And pill should appear in dock slot
-    expect(slot.textContent).toContain("Portfolio");
-    const dock = JSON.parse(window.localStorage.getItem(LS_DOCK) || "{}");
-    expect(dock.portfolio).toBe(true);
+    const persisted = JSON.parse(window.localStorage.getItem(LS_HIDDEN) || "{}");
+    expect(persisted.portfolio).toBe(true);
   });
 
-  it("restore (↩) on a dock pill moves the widget back to the grid", () => {
-    const slot = mountDockSlot();
+  it("hideable=false widget shows no hide button in its header", () => {
+    mountSlot();
+    const specs = makeSpecs([{ id: "weight", hideable: false }]);
+    render(<DashboardLayout specs={specs} />);
+
+    const weightBody = screen.getByTestId("body-weight");
+    const widgetShell = weightBody.closest("div.flex-col");
+    expect(widgetShell).not.toBeNull();
+    expect(widgetShell!.querySelector('button[title^="Hide widget"]')).toBeNull();
+
+    // Portfolio still has its hide button as a control.
+    const portfolioBody = screen.getByTestId("body-portfolio");
+    const portfolioShell = portfolioBody.closest("div.flex-col");
+    expect(portfolioShell!.querySelector('button[title^="Hide widget"]')).not.toBeNull();
+  });
+
+  it("dockable=false (legacy alias) is honored and disables the hide button", () => {
+    mountSlot();
+    const specs = makeSpecs([{ id: "weight", dockable: false }]);
+    render(<DashboardLayout specs={specs} />);
+    const widgetShell = screen.getByTestId("body-weight").closest("div.flex-col");
+    expect(widgetShell!.querySelector('button[title^="Hide widget"]')).toBeNull();
+  });
+});
+
+describe("DashboardLayout — sidebar (+) panel", () => {
+  it("portal-mounts a '+ widgets' trigger into #dashboard-widgets-slot", () => {
+    const slot = mountSlot();
     render(<DashboardLayout specs={makeSpecs()} />);
+    expect(slot.textContent).toContain("widgets");
+    expect(slot.querySelector('[data-testid="widget-sidebar-trigger"]')).not.toBeNull();
+  });
 
-    // news is default-docked
-    expect(screen.queryByTestId("body-news")).not.toBeInTheDocument();
+  it("trigger shows the hidden-count badge", () => {
+    mountSlot();
+    render(<DashboardLayout specs={makeSpecs()} />);
+    // news is default-hidden → 1 hidden.
+    const trigger = screen.getByTestId("widget-sidebar-trigger");
+    expect(trigger.textContent).toMatch(/\(1 hidden\)/);
+  });
 
-    // restore button is inside the dock slot, title="Restore to grid"
-    const restoreBtn = slot.querySelector('button[title="Restore to grid"]');
-    expect(restoreBtn).not.toBeNull();
-    act(() => {
-      fireEvent.click(restoreBtn!);
-    });
+  it("clicking the trigger opens the sidebar; ✕ closes it", () => {
+    mountSlot();
+    render(<DashboardLayout specs={makeSpecs()} />);
+    expect(screen.queryByTestId("widget-sidebar")).not.toBeInTheDocument();
+    openSidebar();
+    const sidebar = screen.getByTestId("widget-sidebar");
+    expect(sidebar).toBeInTheDocument();
+    expect(sidebar.textContent).toContain("News");
+    expect(sidebar.textContent).toContain("Portfolio");
+
+    const closeBtn = sidebar.querySelector('button[title="Close"]')!;
+    act(() => fireEvent.click(closeBtn));
+    expect(screen.queryByTestId("widget-sidebar")).not.toBeInTheDocument();
+  });
+
+  it("clicking outside (the scrim) closes the sidebar", () => {
+    mountSlot();
+    render(<DashboardLayout specs={makeSpecs()} />);
+    openSidebar();
+    expect(screen.getByTestId("widget-sidebar")).toBeInTheDocument();
+    act(() => fireEvent.mouseDown(screen.getByTestId("widget-sidebar-scrim")));
+    expect(screen.queryByTestId("widget-sidebar")).not.toBeInTheDocument();
+  });
+
+  it("filters widgets by title via the filter input", () => {
+    mountSlot();
+    render(<DashboardLayout specs={makeSpecs()} />);
+    openSidebar();
+
+    const filterInput = screen.getByPlaceholderText("Filter…") as HTMLInputElement;
+    act(() => fireEvent.change(filterInput, { target: { value: "port" } }));
+
+    expect(screen.getByTestId("widget-row-portfolio")).toBeInTheDocument();
+    expect(screen.queryByTestId("widget-row-news")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("widget-row-weight")).not.toBeInTheDocument();
+  });
+
+  it("'+ add' on a hidden widget restores it to the grid + updates persistence", () => {
+    mountSlot();
+    render(<DashboardLayout specs={makeSpecs()} />);
+    openSidebar();
+
+    const row = screen.getByTestId("widget-row-news");
+    const addBtn = row.querySelector('button[title="Add to grid"]')!;
+    expect(addBtn).not.toBeNull();
+    act(() => fireEvent.click(addBtn));
 
     expect(screen.getByTestId("body-news")).toBeInTheDocument();
-    const dock = JSON.parse(window.localStorage.getItem(LS_DOCK) || "{}");
-    expect(dock.news).toBeFalsy();
+    const persisted = JSON.parse(window.localStorage.getItem(LS_HIDDEN) || "{}");
+    expect(persisted.news).toBeFalsy();
   });
 
-  it("clicking the pill body opens a floating popover with the widget content", () => {
-    const slot = mountDockSlot();
+  it("'hide' on a visible widget removes it from the grid + updates persistence", () => {
+    mountSlot();
     render(<DashboardLayout specs={makeSpecs()} />);
+    openSidebar();
 
-    // Click the pill's main button (the one with the title text)
-    const pillOpenBtn = Array.from(
-      slot.querySelectorAll("button"),
-    ).find((b) => b.textContent?.includes("News"));
-    expect(pillOpenBtn).toBeDefined();
-    act(() => {
-      fireEvent.click(pillOpenBtn!);
-    });
+    const row = screen.getByTestId("widget-row-portfolio");
+    const hideBtn = row.querySelector('button[title="Hide from grid"]')!;
+    expect(hideBtn).not.toBeNull();
+    act(() => fireEvent.click(hideBtn));
 
-    // Popover renders news body
-    expect(screen.getByTestId("body-news")).toBeInTheDocument();
-    // Popover has its own restore + close affordances
-    expect(screen.getByTitle("Close")).toBeInTheDocument();
-    expect(screen.getByText(/restore/i)).toBeInTheDocument();
+    expect(screen.queryByTestId("body-portfolio")).not.toBeInTheDocument();
+    const persisted = JSON.parse(window.localStorage.getItem(LS_HIDDEN) || "{}");
+    expect(persisted.portfolio).toBe(true);
   });
 
-  it("popover close button hides the popover but keeps widget docked", () => {
-    const slot = mountDockSlot();
-    render(<DashboardLayout specs={makeSpecs()} />);
+  it("pinned (hideable=false) row shows a 'pinned' label, no hide button", () => {
+    mountSlot();
+    const specs = makeSpecs([{ id: "weight", hideable: false }]);
+    render(<DashboardLayout specs={specs} />);
+    openSidebar();
 
-    const pillOpenBtn = Array.from(slot.querySelectorAll("button")).find((b) =>
-      b.textContent?.includes("News"),
-    )!;
-    act(() => fireEvent.click(pillOpenBtn));
-    expect(screen.getByTestId("body-news")).toBeInTheDocument();
-
-    act(() => fireEvent.click(screen.getByTitle("Close")));
-    expect(screen.queryByTestId("body-news")).not.toBeInTheDocument();
-    // still docked
-    expect(slot.textContent).toContain("News");
+    const row = screen.getByTestId("widget-row-weight");
+    expect(row.querySelector('button[title="Hide from grid"]')).toBeNull();
+    expect(row.textContent?.toLowerCase()).toContain("pinned");
   });
 
-  it("dock pill drag sets text/widget-id on the dataTransfer payload", () => {
-    const slot = mountDockSlot();
+  it("hidden row sets text/widget-id on drag, and dropping it on the grid restores it", () => {
+    mountSlot();
     render(<DashboardLayout specs={makeSpecs()} />);
+    openSidebar();
 
-    const pill = slot.querySelector('[draggable="true"]') as HTMLElement;
-    expect(pill).not.toBeNull();
+    const row = screen.getByTestId("widget-row-news");
+    expect(row.getAttribute("draggable")).toBe("true");
 
     const setData = vi.fn();
-    fireEvent.dragStart(pill, {
-      dataTransfer: { setData, effectAllowed: "" },
-    });
+    fireEvent.dragStart(row, { dataTransfer: { setData, effectAllowed: "" } });
     expect(setData).toHaveBeenCalledWith("text/widget-id", "news");
-  });
 
-  it("dropping a navbar pill onto the grid restores the widget", () => {
-    const slot = mountDockSlot();
-    render(<DashboardLayout specs={makeSpecs()} />);
-
-    expect(screen.queryByTestId("body-news")).not.toBeInTheDocument();
-
-    // The grid container is the parent of the rgl-mock testid
+    // Drop on the grid container (parent of the rgl-mock).
     const grid = screen.getByTestId("rgl-mock").parentElement!;
     fireEvent.drop(grid, {
       dataTransfer: {
@@ -233,13 +308,12 @@ describe("DashboardLayout", () => {
     });
 
     expect(screen.getByTestId("body-news")).toBeInTheDocument();
-    expect(slot.textContent).not.toContain("News");
+    expect(screen.queryByTestId("widget-sidebar")).not.toBeInTheDocument();
   });
 
-  it("ignores drops whose payload is not a known widget id", () => {
-    const slot = mountDockSlot();
+  it("drops with an unknown payload are ignored (no spurious renders)", () => {
+    mountSlot();
     render(<DashboardLayout specs={makeSpecs()} />);
-
     const grid = screen.getByTestId("rgl-mock").parentElement!;
     fireEvent.drop(grid, {
       dataTransfer: {
@@ -247,63 +321,48 @@ describe("DashboardLayout", () => {
         types: ["text/widget-id"],
       },
     });
-
-    // News stays docked, grid did not gain a body for the bogus id
-    expect(slot.textContent).toContain("News");
+    // news is still hidden.
     expect(screen.queryByTestId("body-news")).not.toBeInTheDocument();
   });
+});
 
+describe("DashboardLayout — layout persistence", () => {
   it("onLayoutChange persists the new layout to localStorage", () => {
-    mountDockSlot();
+    mountSlot();
     render(<DashboardLayout specs={makeSpecs()} />);
 
     act(() => fireEvent.click(screen.getByTestId("rgl-simulate-layout")));
 
     const saved = JSON.parse(window.localStorage.getItem(LS_LAYOUT) || "{}");
-    // The mock simulator nudges every item's x by +1. Portfolio default x=0 → 1.
     expect(saved.portfolio).toEqual({ x: 1, y: 0, w: 6, h: 8 });
     expect(saved.weight).toEqual({ x: 7, y: 0, w: 6, h: 8 });
   });
 
   it("persisted layout overrides defaultLayout on next mount", () => {
-    mountDockSlot();
+    mountSlot();
     window.localStorage.setItem(
       LS_LAYOUT,
       JSON.stringify({ portfolio: { x: 3, y: 4, w: 4, h: 4 } }),
     );
-    // also persist empty dock so defaultDocked seeding doesn't re-run
-    window.localStorage.setItem(LS_DOCK, JSON.stringify({}));
-
+    window.localStorage.setItem(LS_HIDDEN, JSON.stringify({}));
     render(<DashboardLayout specs={makeSpecs()} />);
 
-    // News should NOT be auto-docked (persisted dock state takes precedence)
     expect(screen.getByTestId("body-news")).toBeInTheDocument();
-    // Portfolio still rendered in grid
     expect(screen.getByTestId("body-portfolio")).toBeInTheDocument();
   });
+});
 
-  it("dockable=false widget shows no park button in its header", () => {
-    mountDockSlot();
-    const specs = makeSpecs([{ id: "weight", dockable: false }]);
-    render(<DashboardLayout specs={specs} />);
-
-    // Find the weight widget container by its body and walk up
-    const weightBody = screen.getByTestId("body-weight");
-    const widgetShell = weightBody.closest("div.flex-col");
-    expect(widgetShell).not.toBeNull();
-    expect(widgetShell!.querySelector('button[title="Park in navbar"]')).toBeNull();
-
-    // Portfolio still has its park button (control case)
-    const portfolioBody = screen.getByTestId("body-portfolio");
-    const portfolioShell = portfolioBody.closest("div.flex-col");
-    expect(
-      portfolioShell!.querySelector('button[title="Park in navbar"]'),
-    ).not.toBeNull();
-  });
-
-  it("survives a tick when #dashboard-dock-slot is missing (no crash)", () => {
-    // No slot in DOM. Component should still render the grid path.
+describe("DashboardLayout — defensive", () => {
+  it("survives missing #dashboard-widgets-slot (no portal target → no crash)", () => {
     expect(() => render(<DashboardLayout specs={makeSpecs()} />)).not.toThrow();
     expect(screen.getByTestId("body-portfolio")).toBeInTheDocument();
+  });
+
+  it("falls back to the legacy #dashboard-dock-slot if the new id is absent", () => {
+    const legacy = document.createElement("div");
+    legacy.id = "dashboard-dock-slot";
+    document.body.appendChild(legacy);
+    render(<DashboardLayout specs={makeSpecs()} />);
+    expect(legacy.querySelector('[data-testid="widget-sidebar-trigger"]')).not.toBeNull();
   });
 });
