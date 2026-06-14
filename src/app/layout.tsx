@@ -27,7 +27,13 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
+      {/* suppressHydrationWarning on <body> silences benign warnings from
+          browser extensions (Grammarly, password managers, dark-mode toggles)
+          that mutate body attributes BEFORE React hydrates. Only attributes
+          one level deep are suppressed — real hydration bugs in our own tree
+          still surface. */}
       <body
+        suppressHydrationWarning
         className={`${geistSans.variable} ${geistMono.variable} ${instrumentSerif.variable} antialiased`}
       >
         {children}

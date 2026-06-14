@@ -420,6 +420,24 @@ export default function Home() {
     return () => clearTimeout(t);
   }, [toast, lastEntry]);
 
+  // Surface Spotify OAuth callback status (?spotify=connected|denied|bad_state|error)
+  // as a toast, then strip the query param so a refresh doesn't re-fire it.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    const s = url.searchParams.get("spotify");
+    if (!s) return;
+    const msg: Record<string, string> = {
+      connected: "🎧 Spotify connected.",
+      denied: "Spotify connection denied.",
+      bad_state: "Spotify login failed: state mismatch. Try the Connect button again (must stay on 127.0.0.1, not localhost).",
+      error: "Spotify token exchange failed. Check SPOTIFY_CLIENT_ID / SECRET in .env.local.",
+    };
+    setToast(msg[s] ?? `Spotify: ${s}`);
+    url.searchParams.delete("spotify");
+    window.history.replaceState({}, "", url.toString());
+  }, []);
+
   // Rotate placeholder examples every 4s when input is empty + not busy.
   useEffect(() => {
     if (busy || text) return;
@@ -437,9 +455,19 @@ export default function Home() {
   }, [lastEntry]);
 
   // Voice dictation via MediaRecorder → /api/transcribe (local faster-whisper).
-  const speechSupported = typeof window !== "undefined" &&
-    typeof navigator !== "undefined" && !!navigator.mediaDevices &&
-    typeof (window as unknown as { MediaRecorder?: unknown }).MediaRecorder !== "undefined";
+  // Detected after mount so SSR (always false) matches the first client render
+  // and we don't trip a hydration mismatch on the mic button.
+  const [speechSupported, setSpeechSupported] = useState(false);
+  useEffect(() => {
+    if (
+      typeof window !== "undefined" &&
+      typeof navigator !== "undefined" &&
+      !!navigator.mediaDevices &&
+      typeof (window as unknown as { MediaRecorder?: unknown }).MediaRecorder !== "undefined"
+    ) {
+      setSpeechSupported(true);
+    }
+  }, []);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
@@ -1279,7 +1307,7 @@ export default function Home() {
                 No projects yet. Click <span className="mx-1 text-zinc-400">+ add</span> to track one.
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+              <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(180px,1fr))]">
                 {projects.map((p) => {
                   const phaseTone: Record<string, string> = {
                     idea: "bg-zinc-800 text-zinc-300 border-zinc-700",
@@ -1484,9 +1512,6 @@ export default function Home() {
         ]}
       />
 
-      {/* AI widget generator FAB (bottom-right) */}
-      <WidgetCreator onCreated={loadCustomWidgets} />
-
       {/* Pinned input row */}
       <div className="shrink-0 px-2 pb-2 pt-1 flex flex-col items-center gap-1">
 
@@ -1557,6 +1582,7 @@ export default function Home() {
             >
               ⚡
             </button>
+            <WidgetCreator onCreated={loadCustomWidgets} />
             <button
               onClick={send}
               disabled={!text.trim() && queue.length === 0 && !busy ? true : (!text.trim() ? true : false)}

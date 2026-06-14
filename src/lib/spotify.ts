@@ -12,7 +12,11 @@ import db from "@/lib/db";
 //        SPOTIFY_CLIENT_SECRET=...
 //        SPOTIFY_REDIRECT_URI=http://127.0.0.1:3000/api/spotify/callback  (optional override)
 
-export const SPOTIFY_SCOPES = "user-read-playback-state user-read-currently-playing";
+export const SPOTIFY_SCOPES = [
+  "user-read-playback-state",
+  "user-read-currently-playing",
+  "user-modify-playback-state",
+].join(" ");
 
 export function getClientId(): string | null {
   return process.env.SPOTIFY_CLIENT_ID || null;
@@ -164,4 +168,114 @@ export async function getNowPlaying(): Promise<NowPlaying> {
     duration_ms: typeof item.duration_ms === "number" ? item.duration_ms : null,
     track_url: item.external_urls?.spotify ?? null,
   };
+}
+
+// ── playback control ────────────────────────────────────────────────────────
+// Thin wrapper around the Spotify Web API player endpoints. Returns:
+//   { ok: true }                           on success
+//   { ok: false, status, reason }          on Spotify API error
+//   { ok: false, status: 401, ... }        if not connected
+// Auto-refreshes the access token on 401 once before giving up.
+export type ControlResult =
+  | { ok: true; status: number }
+  | { ok: false; status: number; reason: string };
+
+async function callSpotify(
+  method: "PUT" | "POST" | "GET",
+  path: string,
+  init: { query?: Record<string, string | number | boolean>; body?: unknown } = {},
+): Promise<ControlResult> {
+  const doFetch = async (token: string): Promise<Response> => {
+    const url = new URL(`https://api.spotify.com/v1${path}`);
+    if (init.query) {
+      for (const [k, v] of Object.entries(init.query)) url.searchParams.set(k, String(v));
+    }
+    const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+    let body: BodyInit | undefined;
+    if (init.body !== undefined) {
+      headers["Content-Type"] = "application/json";
+      body = JSON.stringify(init.body);
+    }
+    return fetch(url.toString(), { method, headers, body, cache: "no-store" });
+  };
+
+  let token = await getValidAccessToken();
+  if (!token) return { ok: false, status: 401, reason: "not_connected" };
+
+  let r = await doFetch(token);
+  // 401 → token may have just expired between getValidAccessToken's check and the call.
+  // Try one forced refresh.
+  if (r.status === 401) {
+    const stored = readTokens();
+    if (stored?.refresh_token) {
+      try {
+        token = await refreshAccessToken(stored.refresh_token);
+        r = await doFetch(token);
+      } catch {
+        return { ok: false, status: 401, reason: "token_refresh_failed" };
+      }
+    }
+  }
+
+  if (r.ok || r.status === 204) return { ok: true, status: r.status };
+
+  // 404 from player endpoints typically means "no active device".
+  let reason = `spotify_${r.status}`;
+  if (r.status === 404) reason = "no_active_device";
+  else if (r.status === 403) reason = "premium_required_or_forbidden";
+  else {
+    // Try to surface Spotify's error message if there is one.
+    try {
+      const j = await r.json();
+      if (j?.error?.message) reason = String(j.error.message);
+    } catch {
+      /* ignore */
+    }
+  }
+  return { ok: false, status: r.status, reason };
+}
+
+export async function play(deviceId?: string): Promise<ControlResult> {
+  return callSpotify("PUT", "/me/player/play", deviceId ? { query: { device_id: deviceId } } : {});
+}
+export async function pause(deviceId?: string): Promise<ControlResult> {
+  return callSpotify("PUT", "/me/player/pause", deviceId ? { query: { device_id: deviceId } } : {});
+}
+export async function nextTrack(deviceId?: string): Promise<ControlResult> {
+  return callSpotify("POST", "/me/player/next", deviceId ? { query: { device_id: deviceId } } : {});
+}
+export async function previousTrack(deviceId?: string): Promise<ControlResult> {
+  return callSpotify("POST", "/me/player/previous", deviceId ? { query: { device_id: deviceId } } : {});
+}
+export async function setShuffle(state: boolean, deviceId?: string): Promise<ControlResult> {
+  const q: Record<string, string | boolean> = { state };
+  if (deviceId) q.device_id = deviceId;
+  return callSpotify("PUT", "/me/player/shuffle", { query: q });
+}
+// state must be one of "off" | "track" | "context"
+export async function setRepeat(
+  state: "off" | "track" | "context",
+  deviceId?: string,
+): Promise<ControlResult> {
+  const q: Record<string, string> = { state };
+  if (deviceId) q.device_id = deviceId;
+  return callSpotify("PUT", "/me/player/repeat", { query: q });
+}
+// volume_percent: 0..100
+export async function setVolume(volume_percent: number, deviceId?: string): Promise<ControlResult> {
+  const v = Math.max(0, Math.min(100, Math.round(volume_percent)));
+  const q: Record<string, string | number> = { volume_percent: v };
+  if (deviceId) q.device_id = deviceId;
+  return callSpotify("PUT", "/me/player/volume", { query: q });
+}
+// Toggle play/pause based on current state (read once to decide).
+export async function togglePlayback(deviceId?: string): Promise<ControlResult> {
+  try {
+    const now = await getNowPlaying();
+    if (now.is_playing) return pause(deviceId);
+    return play(deviceId);
+  } catch {
+    // If we can't read state, default to play.
+    return play(deviceId);
+  }
 }

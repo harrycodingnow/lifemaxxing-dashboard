@@ -273,6 +273,17 @@ function mockWeather() {
     x.setDate(x.getDate() + offset);
     return x.toISOString().slice(0, 10);
   };
+  // Plausible-looking precip arc over 24h: dry overnight, ramping up to a
+  // 60% peak around 15:00, easing back down.
+  const today = d(0);
+  const popCurve = [10, 10, 5, 5, 5, 5, 10, 15, 20, 25, 30, 35, 45, 55, 60, 60, 55, 45, 35, 25, 20, 15, 10, 10];
+  const tempCurve = [25, 24, 24, 23, 23, 24, 25, 26, 27, 28, 29, 29, 30, 30, 30, 29, 29, 28, 27, 26, 26, 25, 25, 24];
+  const hourly = popCurve.map((pop, h) => ({
+    iso: `${today}T${String(h).padStart(2, "0")}:00`,
+    hour: h,
+    temp: tempCurve[h],
+    precip_prob: pop,
+  }));
   return {
     available: true,
     location: "Taipei, Taiwan",
@@ -280,6 +291,7 @@ function mockWeather() {
     longitude: 121.53,
     timezone: "Asia/Taipei",
     current: { temp: 28, feels_like: 31, code: 2, label: "Partly cloudy", emoji: "⛅", humidity: 74, wind: 12, is_day: true },
+    today: { date: today, t_max: 30, t_min: 24, max_precip_prob: 60, hourly },
     daily: [
       day(d(0), "⛅", "Partly cloudy", 30, 24, 20),
       day(d(1), "🌦️", "Light showers", 28, 23, 60, 80),

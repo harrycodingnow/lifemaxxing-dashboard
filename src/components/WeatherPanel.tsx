@@ -1,8 +1,14 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { DEMO_EVENT } from "@/lib/demo-data";
 
+type WeatherHour = {
+  iso: string;
+  hour: number;
+  temp: number;
+  precip_prob: number | null;
+};
 type WeatherDay = {
   date: string;
   code: number;
@@ -25,20 +31,18 @@ type Weather = {
     wind: number | null;
     is_day: boolean;
   };
+  today?: {
+    date: string;
+    t_max: number;
+    t_min: number;
+    max_precip_prob: number | null;
+    hourly: WeatherHour[];
+  };
   daily?: WeatherDay[];
   error?: string;
 };
 
 const LS_KEY = "weatherPlace";
-
-function dayName(date: string): string {
-  const d = new Date(date + "T00:00:00");
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const diff = Math.round((d.getTime() - today.getTime()) / 86400_000);
-  if (diff === 0) return "Today";
-  if (diff === 1) return "Tmrw";
-  return d.toLocaleDateString(undefined, { weekday: "short" });
-}
 
 export default function WeatherPanel() {
   const [place, setPlace] = useState("Taipei");
@@ -87,6 +91,32 @@ export default function WeatherPanel() {
   };
 
   const cur = data?.current;
+  const today = data?.today;
+
+  // Pre-compute the precip chart in one pass. We render an SVG inline so the
+  // widget doesn't pull recharts just for 24 bars + a temp range. Resolution:
+  // 24 hourly buckets, height = chart h. Width comes from a CSS-driven viewBox
+  // so the chart scales to the widget.
+  const chart = useMemo(() => {
+    const hourly = today?.hourly ?? [];
+    if (hourly.length === 0) return null;
+    // Buckets always represent local 00..23. If the API returned a partial
+    // window (e.g. mid-day refresh that lost early-AM data), zero-fill the gap
+    // so x-axis stays anchored at midnight.
+    const byHour: Array<{ hour: number; pop: number | null; temp: number | null }> = Array.from(
+      { length: 24 },
+      (_, h) => ({ hour: h, pop: null, temp: null }),
+    );
+    for (const h of hourly) {
+      if (h.hour >= 0 && h.hour < 24) {
+        byHour[h.hour] = { hour: h.hour, pop: h.precip_prob, temp: h.temp };
+      }
+    }
+    return byHour;
+  }, [today]);
+
+  // Current local hour, for highlighting the bar that represents "now".
+  const nowHour = new Date().getHours();
 
   return (
     <div className="h-full flex flex-col min-h-0 px-3 py-2">
@@ -124,12 +154,21 @@ export default function WeatherPanel() {
           </div>
         ) : cur ? (
           <>
-            {/* Current */}
+            {/* Current — emoji + temp + today's high/low range */}
             <div className="flex items-center gap-3 px-1">
               <span className="text-5xl leading-none">{cur.emoji}</span>
               <div className="min-w-0">
-                <div className="text-3xl font-semibold tabular-nums text-zinc-100 leading-none">{cur.temp}°</div>
-                <div className="text-[12px] text-zinc-400 truncate">{cur.label}</div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-3xl font-semibold tabular-nums text-zinc-100 leading-none">{cur.temp}°</span>
+                  {today && (
+                    <span className="text-[12px] tabular-nums text-zinc-400 leading-none">
+                      <span className="text-rose-400">↑{today.t_max}°</span>
+                      <span className="mx-1 text-zinc-700">/</span>
+                      <span className="text-sky-400">↓{today.t_min}°</span>
+                    </span>
+                  )}
+                </div>
+                <div className="text-[12px] text-zinc-400 truncate mt-0.5">{cur.label}</div>
               </div>
             </div>
             <div className="flex items-center gap-3 mt-1.5 px-1 text-[11px] text-zinc-500">
@@ -138,20 +177,59 @@ export default function WeatherPanel() {
               {cur.wind != null && <span>💨 {Math.round(cur.wind)} km/h</span>}
             </div>
 
-            {/* Forecast strip */}
-            {data.daily && data.daily.length > 0 && (
-              <div className="mt-auto pt-2 grid grid-cols-5 gap-1">
-                {data.daily.slice(0, 5).map((d) => (
-                  <div key={d.date} className="flex flex-col items-center gap-0.5 rounded-md bg-zinc-900/40 py-1.5" title={`${d.label}${d.precip_prob != null ? ` · ${d.precip_prob}% precip` : ""}`}>
-                    <span className="text-[10px] text-zinc-500">{dayName(d.date)}</span>
-                    <span className="text-lg leading-none">{d.emoji}</span>
-                    <span className="text-[11px] tabular-nums text-zinc-200">{d.t_max}°</span>
-                    <span className="text-[10px] tabular-nums text-zinc-500">{d.t_min}°</span>
-                    {d.precip_prob != null && d.precip_prob >= 20 && (
-                      <span className="text-[9px] text-sky-400 tabular-nums">{d.precip_prob}%</span>
-                    )}
-                  </div>
-                ))}
+            {/* Rain probability over today — bars per local hour */}
+            {chart && (
+              <div className="mt-auto pt-2" data-testid="weather-rain-chart">
+                <div className="flex items-baseline justify-between text-[10px] text-zinc-500 mb-1 px-0.5">
+                  <span className="uppercase tracking-wider">Rain · today</span>
+                  {today?.max_precip_prob != null && (
+                    <span className="tabular-nums text-sky-300">peak {today.max_precip_prob}%</span>
+                  )}
+                </div>
+                <div className="relative w-full" style={{ height: 56 }}>
+                  <svg
+                    viewBox="0 0 240 56"
+                    preserveAspectRatio="none"
+                    className="w-full h-full"
+                    aria-label="Hourly precipitation probability for today"
+                  >
+                    {/* 0/50/100 gridlines */}
+                    {[0, 28, 56].map((y, i) => (
+                      <line
+                        key={i}
+                        x1="0"
+                        x2="240"
+                        y1={y === 0 ? 0.5 : y === 56 ? 55.5 : y}
+                        y2={y === 0 ? 0.5 : y === 56 ? 55.5 : y}
+                        stroke="#27272a"
+                        strokeWidth="0.5"
+                        strokeDasharray={y === 28 ? "2,3" : undefined}
+                      />
+                    ))}
+                    {chart.map((b, i) => {
+                      const pop = b.pop ?? 0;
+                      const barH = Math.max(0.5, (pop / 100) * 56);
+                      const x = i * 10; // 24 bars * 10 = 240 (matches viewBox width)
+                      const isNow = b.hour === nowHour;
+                      return (
+                        <rect
+                          key={i}
+                          x={x + 0.5}
+                          y={56 - barH}
+                          width={9}
+                          height={barH}
+                          fill={isNow ? "#38bdf8" : pop >= 50 ? "#0ea5e9" : pop >= 20 ? "#0c7ea2" : "#1e3a5f"}
+                          opacity={pop === 0 ? 0.25 : 1}
+                        >
+                          <title>{`${String(b.hour).padStart(2, "0")}:00 — ${pop}% rain${b.temp != null ? `, ${b.temp}°` : ""}`}</title>
+                        </rect>
+                      );
+                    })}
+                  </svg>
+                </div>
+                <div className="flex justify-between text-[9px] text-zinc-600 mt-0.5 px-0.5 tabular-nums">
+                  <span>00</span><span>06</span><span>12</span><span>18</span><span>24</span>
+                </div>
               </div>
             )}
           </>

@@ -74,6 +74,36 @@ export default function SpotifyPanel() {
     }
   }, [poll]);
 
+  // ── Playback control (POST /api/spotify/control) ──────────────────────────
+  const [ctrlBusy, setCtrlBusy] = useState<null | "play" | "pause" | "next" | "prev">(null);
+  const [ctrlNote, setCtrlNote] = useState<string | null>(null);
+  const control = useCallback(
+    async (action: "toggle" | "next" | "previous", optimisticBusy: "play" | "pause" | "next" | "prev") => {
+      setCtrlBusy(optimisticBusy);
+      setCtrlNote(null);
+      try {
+        const r = await fetch("/api/spotify/control", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok && r.status !== 202) {
+          setCtrlNote(j?.hint || j?.error || `Error ${r.status}`);
+        } else if (r.status === 202) {
+          setCtrlNote(j?.hint || "Open the Spotify app on any device first.");
+        }
+        // Re-poll so progress + play state catch up.
+        await poll();
+      } catch (e) {
+        setCtrlNote((e as Error).message);
+      } finally {
+        setCtrlBusy(null);
+      }
+    },
+    [poll],
+  );
+
   const now = status?.now ?? null;
   const playing = !!now?.is_playing;
   const duration = now?.duration_ms ?? null;
@@ -177,6 +207,46 @@ export default function SpotifyPanel() {
                 </>
               ) : (
                 <div className="text-[12px] text-zinc-500">Nothing playing right now.</div>
+              )}
+              {/* Transport controls — always rendered when connected so the user
+                  can hit play even if "nothing is playing" (e.g. after pause). */}
+              <div
+                data-testid="spotify-transport"
+                className="mt-3 flex items-center justify-center gap-3 text-zinc-300"
+              >
+                <button
+                  type="button"
+                  onClick={() => control("previous", "prev")}
+                  disabled={!!ctrlBusy}
+                  aria-label="Previous track"
+                  title="Previous"
+                  className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-zinc-800 hover:text-white disabled:opacity-40 transition-colors"
+                >
+                  ⏮
+                </button>
+                <button
+                  type="button"
+                  onClick={() => control("toggle", playing ? "pause" : "play")}
+                  disabled={!!ctrlBusy}
+                  aria-label={playing ? "Pause" : "Play"}
+                  title={playing ? "Pause" : "Play"}
+                  className="w-11 h-11 rounded-full flex items-center justify-center bg-emerald-600 hover:bg-emerald-500 text-zinc-950 text-lg disabled:opacity-40 transition-colors"
+                >
+                  {ctrlBusy === "play" || ctrlBusy === "pause" ? "…" : playing ? "⏸" : "▶"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => control("next", "next")}
+                  disabled={!!ctrlBusy}
+                  aria-label="Next track"
+                  title="Next"
+                  className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-zinc-800 hover:text-white disabled:opacity-40 transition-colors"
+                >
+                  ⏭
+                </button>
+              </div>
+              {ctrlNote && (
+                <div className="mt-1 text-[10px] text-amber-400/80 leading-snug">{ctrlNote}</div>
               )}
             </div>
           </>

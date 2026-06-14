@@ -11,6 +11,15 @@ export type WeatherDay = {
   t_min: number;
   precip_prob: number | null;
 };
+// One hour of today's forecast. `hour` is local-clock hour 0..23 (in the
+// location's timezone). `temp` is °C, `precip_prob` is 0..100 (or null when
+// the API has no data).
+export type WeatherHour = {
+  iso: string;
+  hour: number;
+  temp: number;
+  precip_prob: number | null;
+};
 export type Weather = {
   location: string;
   latitude: number;
@@ -25,6 +34,16 @@ export type Weather = {
     humidity: number | null;
     wind: number | null;
     is_day: boolean;
+  };
+  // High/low for today only, plus a 24-entry hourly array for "today" in the
+  // location's local timezone. `today_max_precip_prob` is the headline number
+  // for the precipitation widget.
+  today: {
+    date: string;
+    t_max: number;
+    t_min: number;
+    max_precip_prob: number | null;
+    hourly: WeatherHour[];
   };
   daily: WeatherDay[];
 };
@@ -85,6 +104,7 @@ export async function getWeather(place: string): Promise<Weather> {
     latitude: String(geo.latitude),
     longitude: String(geo.longitude),
     current: "temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,is_day",
+    hourly: "temperature_2m,precipitation_probability",
     daily: "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
     timezone: "auto",
     forecast_days: "5",
@@ -110,6 +130,41 @@ export async function getWeather(place: string): Promise<Weather> {
     };
   });
 
+  // Today's hourly rollup. Open-Meteo's `hourly.time[]` entries are local-time
+  // ISO strings when timezone=auto, so the first 24 should cover "today" in
+  // the location's local timezone. We slice the first 24 entries that share
+  // the same yyyy-mm-dd as the first daily entry (today). Filter rather than
+  // blindly slice so the array shape stays correct when the API returns
+  // truncated data.
+  const todayDate = j.daily?.time?.[0] ?? new Date().toISOString().slice(0, 10);
+  const hourlyTimes: string[] = j.hourly?.time ?? [];
+  const hourlyTemps: number[] = j.hourly?.temperature_2m ?? [];
+  const hourlyPops: (number | null)[] = j.hourly?.precipitation_probability ?? [];
+  const today_hourly: WeatherHour[] = [];
+  for (let i = 0; i < hourlyTimes.length; i++) {
+    const t = hourlyTimes[i];
+    if (typeof t !== "string" || !t.startsWith(todayDate)) continue;
+    // Local hour 0..23 — Open-Meteo formats as "YYYY-MM-DDTHH:MM" in local time.
+    const hour = Number(t.slice(11, 13));
+    today_hourly.push({
+      iso: t,
+      hour: Number.isFinite(hour) ? hour : 0,
+      temp: Math.round(hourlyTemps[i] ?? 0),
+      precip_prob:
+        hourlyPops[i] == null || !Number.isFinite(hourlyPops[i] as number)
+          ? null
+          : Math.round(hourlyPops[i] as number),
+    });
+  }
+
+  const today = {
+    date: todayDate,
+    t_max: daily[0]?.t_max ?? Math.round(c.temperature_2m),
+    t_min: daily[0]?.t_min ?? Math.round(c.temperature_2m),
+    max_precip_prob: daily[0]?.precip_prob ?? null,
+    hourly: today_hourly,
+  };
+
   const locName = [geo.name, geo.admin1 && geo.admin1 !== geo.name ? null : null].filter(Boolean).join(", ") || geo.name;
 
   return {
@@ -127,6 +182,7 @@ export async function getWeather(place: string): Promise<Weather> {
       wind: c.wind_speed_10m ?? null,
       is_day: isDay,
     },
+    today,
     daily,
   };
 }
