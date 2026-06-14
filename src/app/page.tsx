@@ -24,6 +24,7 @@ import WeatherPanel from "@/components/WeatherPanel";
 import CustomWidget from "@/components/CustomWidget";
 import WidgetCreator from "@/components/WidgetCreator";
 import WeeklyReview from "@/components/WeeklyReview";
+import ReadLaterPanel from "@/components/ReadLaterPanel";
 import { DashboardLayout, type WidgetSpec } from "@/components/DashboardLayout";
 import { isDemoMode, setDemoMode, installDemoFetch, DEMO_EVENT } from "@/lib/demo-data";
 import {
@@ -1594,6 +1595,14 @@ export default function Home() {
           dockable: true,
           defaultDocked: true,
           render: () => <WeatherPanel />,
+        },
+        {
+          id: "read-later",
+          title: t("widget.readLater"),
+          defaultLayout: { x: 8, y: 40, w: 4, h: 8 },
+          dockable: true,
+          defaultDocked: true,
+          render: () => <ReadLaterPanel />,
         },
         // User-generated widgets (Hermes-authored HTML, sandboxed iframe).
         ...customWidgets.map((cw, i) => ({

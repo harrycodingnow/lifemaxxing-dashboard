@@ -167,6 +167,29 @@ CREATE TABLE IF NOT EXISTS custom_widgets (
   archived_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_custom_widgets_active ON custom_widgets(archived_at, created_ts);
+
+-- Read-later inbox: URLs (YouTube, articles, blog posts, anything) the user
+-- wants to come back to. Auto-populated when a chat message is a bare URL.
+-- Metadata is best-effort: YouTube via oEmbed, everything else via the page's
+-- og:title / og:image / og:description meta tags fetched server-side.
+CREATE TABLE IF NOT EXISTS saved_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  added_at INTEGER NOT NULL,
+  url TEXT NOT NULL UNIQUE,         -- canonical URL we stored against
+  kind TEXT NOT NULL,               -- 'youtube' | 'article' | 'twitter' | 'other'
+  title TEXT,                       -- page <title> or og:title
+  description TEXT,                 -- og:description (first 500 chars)
+  author TEXT,                      -- YouTube channel name / article byline
+  site_name TEXT,                   -- og:site_name or hostname
+  thumbnail_url TEXT,               -- og:image or YouTube thumbnail
+  duration_seconds INTEGER,         -- YouTube videos only
+  status TEXT NOT NULL DEFAULT 'unread',  -- 'unread' | 'reading' | 'done'
+  note TEXT,                        -- optional user note (anything after the URL in the chat message)
+  opened_at INTEGER,                -- when the user clicked through
+  archived_at INTEGER,              -- soft-delete (matches the rest of the schema)
+  raw_meta_json TEXT                -- full fetched metadata blob for forensics
+);
+CREATE INDEX IF NOT EXISTS idx_saved_links_active ON saved_links(archived_at, status, added_at DESC);
 `);
 
 // Idempotent migration: add deleted_at to trades/meals/weights if missing.

@@ -142,12 +142,13 @@ Classify the user message into exactly ONE intent:
   - "subscription" : a RECURRING paid subscription the user wants to track (e.g. "netflix 390/mo", "spotify yearly 1990", "track my icloud subscription 30 twd monthly", "訂閱 youtube premium 179 每月"). Triggers: a service name + a recurring price + a cycle word (monthly/月/mo, yearly/年/yr, weekly/週). NOT a one-off purchase.
   - "habit"     : marking a daily HABIT done or skipped (e.g. "did meditation", "skipped gym", "完成 跑步", "做了冥想", "didn't do reading today"). Triggers: "did X", "done X", "skipped X", "完成", "做了", "沒做". This is about a repeatable daily routine, NOT a one-off task (todo) and NOT a meal.
   - "networth"  : logging a CASH balance or a DEBT/liability for net-worth tracking (e.g. "cathay cash 250000", "bank balance 1.2m", "student loan -50000", "credit card debt 30000", "國泰現金 250000", "車貸 -300000"). Cash = positive asset; a loan/debt/credit-card is a liability (often written with a minus sign or the words loan/debt/貸款/欠).
+  - "link"      : the user is saving a URL to read or watch later — a bare URL (YouTube, blog post, article, tweet), optionally with a short note like "watch later", "save this", "稍後看", "晚點讀". If the WHOLE message is essentially just a URL (with maybe a few words of hint), it's a link save. Do NOT classify URLs embedded inside longer log entries (e.g. "bought 5 NVDA, see https://… for context") as link.
   - "batch"     : MULTIPLE separate log entries in one message (e.g. two distinct trades, OR a trade + a meal, OR breakfast + lunch as separate meals). Use this when the user is clearly logging more than one independent thing.
   - "question"  : the user is asking a question, not logging anything
   - "unknown"   : cannot determine
 
 Respond with ONLY a single JSON object on the LAST line, no prose, no markdown fences:
-{"intent":"trade|meal|weight|todo|subscription|habit|networth|batch|question|unknown","reason":"<one short sentence>"}
+{"intent":"trade|meal|weight|todo|subscription|habit|networth|link|batch|question|unknown","reason":"<one short sentence>"}
 
 User message:
 """X"""",

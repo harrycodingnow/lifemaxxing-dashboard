@@ -150,6 +150,7 @@ export const MESSAGES = {
   "widget.calendar": { en: "Calendar", zh: "行事曆" },
   "widget.networth": { en: "Net worth", zh: "淨資產" },
   "widget.recurring": { en: "Subscriptions", zh: "訂閱" },
+  "widget.readLater": { en: "📑 Read Later", zh: "📑 稍後讀" },
 
   // ── portfolio
   "portfolio.total": { en: "Total", zh: "總計" },

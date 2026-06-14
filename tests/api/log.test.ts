@@ -146,6 +146,45 @@ describe("POST /api/log", () => {
     expect(json.answer).toBe("Out of scope.");
   });
 
+  it("URL fast-path: bare URL bypasses Hermes router entirely and saves a link", async () => {
+    let hermesCalls = 0;
+    setHermesResponder(() => { hermesCalls++; throw new Error("router should NOT be called"); });
+    // Mock the og:* fetch
+    const { server } = await import("../setup");
+    const { http, HttpResponse } = await import("msw");
+    server.use(
+      http.get("https://example.com/post-1", () =>
+        HttpResponse.html(`<html><head><meta property="og:title" content="Cool Post"></head></html>`),
+      ),
+    );
+    const res = await POST(makeRequest("/api/log", { method: "POST", body: { text: "https://example.com/post-1" } }));
+    const json = await jsonOf(res);
+    expect(res.status).toBe(200);
+    expect(json.kind).toBe("link");
+    expect(json.needsConfirm).toBe(false);
+    expect(json.payload.url).toBe("https://example.com/post-1");
+    expect(json.payload.title).toBe("Cool Post");
+    expect(hermesCalls).toBe(0);
+    // Persisted
+    expect(getDb().prepare("SELECT COUNT(*) AS n FROM saved_links").get()).toEqual({ n: 1 });
+  });
+
+  it("URL fast-path is idempotent: duplicate flag set, no double-insert", async () => {
+    setHermesResponder(() => { throw new Error("router should NOT be called"); });
+    const { server } = await import("../setup");
+    const { http, HttpResponse } = await import("msw");
+    server.use(
+      http.get("https://example.com/dup-1", () =>
+        HttpResponse.html(`<html><head><title>Dup</title></head></html>`),
+      ),
+    );
+    await POST(makeRequest("/api/log", { method: "POST", body: { text: "https://example.com/dup-1" } }));
+    const r2 = await POST(makeRequest("/api/log", { method: "POST", body: { text: "https://example.com/dup-1 watch later" } }));
+    const j2 = await jsonOf(r2);
+    expect(j2.duplicate).toBe(true);
+    expect(getDb().prepare("SELECT COUNT(*) AS n FROM saved_links").get()).toEqual({ n: 1 });
+  });
+
   it("unknown intent → writes chat_log w/ apologetic assistant reply", async () => {
     setHermesResponder(() => ROUTER_UNKNOWN);
     const res = await POST(makeRequest("/api/log", { method: "POST", body: { text: "asdfg" } }));

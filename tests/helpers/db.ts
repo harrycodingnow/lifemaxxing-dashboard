@@ -147,6 +147,23 @@ CREATE TABLE IF NOT EXISTS custom_widgets (
   h INTEGER NOT NULL DEFAULT 6,
   archived_at INTEGER
 );
+CREATE TABLE IF NOT EXISTS saved_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  added_at INTEGER NOT NULL,
+  url TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL,
+  title TEXT,
+  description TEXT,
+  author TEXT,
+  site_name TEXT,
+  thumbnail_url TEXT,
+  duration_seconds INTEGER,
+  status TEXT NOT NULL DEFAULT 'unread',
+  note TEXT,
+  opened_at INTEGER,
+  archived_at INTEGER,
+  raw_meta_json TEXT
+);
 `;
 
 export function getDb(): import("better-sqlite3").Database {
@@ -173,6 +190,7 @@ export function resetDb() {
     DROP TABLE IF EXISTS cash_accounts;
     DROP TABLE IF EXISTS liabilities;
     DROP TABLE IF EXISTS custom_widgets;
+    DROP TABLE IF EXISTS saved_links;
   `);
   db.exec(SCHEMA);
 }

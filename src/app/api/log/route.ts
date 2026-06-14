@@ -4,6 +4,7 @@ import { hermesCall, extractJson } from "@/lib/hermes";
 import { ROUTER_PROMPT, TRADE_PARSE_PROMPT, MEAL_RESEARCH_PROMPT, WEIGHT_PARSE_PROMPT, BATCH_PARSE_PROMPT, TODO_PARSE_PROMPT, SUBSCRIPTION_PARSE_PROMPT, HABIT_PARSE_PROMPT, NETWORTH_PARSE_PROMPT, ASK_PROMPT } from "@/lib/prompts";
 import { matchKnownFoods, hitToMealItem, type KnownFoodHit } from "@/lib/known-foods";
 import { guardSelect, applyRowCap } from "@/lib/sql-guard";
+import { looksLikeLinkSave, extractFirstUrl, fetchLinkMeta } from "@/lib/links";
 
 // SECURITY: this endpoint shells out to the local `hermes` CLI with --yolo --ignore-rules,
 // granting full tool access on the host machine. NEVER expose this dashboard to a public
@@ -11,7 +12,7 @@ import { guardSelect, applyRowCap } from "@/lib/sql-guard";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type RouterOut = { intent: "trade" | "meal" | "weight" | "todo" | "subscription" | "habit" | "networth" | "batch" | "question" | "unknown"; reason: string };
+type RouterOut = { intent: "trade" | "meal" | "weight" | "todo" | "subscription" | "habit" | "networth" | "link" | "batch" | "question" | "unknown"; reason: string };
 type TradeOut = {
   asset_type: "tw_stock" | "us_stock" | "crypto";
   symbol: string;
@@ -308,6 +309,62 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Fast-path: URL save. If the entire message is essentially a URL (with at
+  // most a short "watch later" / "稍後看" style hint), skip the router LLM
+  // entirely and save it as a read-later link. Returns kind="link" so the
+  // chat UI can show a confirmation pill that matches the existing flow.
+  if (looksLikeLinkSave(text)) {
+    const url = extractFirstUrl(text)!;
+    const leftover = text.replace(url, "").trim();
+    const note = leftover && leftover.length <= 500 ? leftover : null;
+    try {
+      const meta = await fetchLinkMeta(url);
+      // Idempotent: if the same URL is already saved (and not archived), return it.
+      const existing = db.prepare(
+        `SELECT id, added_at, url, kind, title, description, author, site_name,
+                thumbnail_url, duration_seconds, status, note, opened_at
+         FROM saved_links WHERE url = ? AND archived_at IS NULL`,
+      ).get(url) as Record<string, unknown> | undefined;
+      let row: Record<string, unknown>;
+      let duplicate = false;
+      if (existing) {
+        row = existing;
+        duplicate = true;
+      } else {
+        const info = db.prepare(`
+          INSERT INTO saved_links (
+            added_at, url, kind, title, description, author, site_name,
+            thumbnail_url, duration_seconds, status, note, raw_meta_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'unread', ?, ?)
+        `).run(
+          Date.now(), meta.url, meta.kind, meta.title, meta.description, meta.author,
+          meta.site_name, meta.thumbnail_url, meta.duration_seconds, note, JSON.stringify(meta.raw),
+        );
+        row = db.prepare(
+          `SELECT id, added_at, url, kind, title, description, author, site_name,
+                  thumbnail_url, duration_seconds, status, note, opened_at
+           FROM saved_links WHERE id = ?`,
+        ).get(info.lastInsertRowid) as Record<string, unknown>;
+      }
+      const titleStr = (row.title as string | null) ?? (row.url as string);
+      const preview = duplicate ? `Already saved: ${titleStr}` : `Saved · ${titleStr}`;
+      return NextResponse.json({
+        kind: "link",
+        preview,
+        payload: row,
+        text,
+        needsConfirm: false,
+        duplicate,
+        routed: { intent: "link", reason: "URL fast-path" },
+      });
+    } catch (e) {
+      return NextResponse.json(
+        { error: `link save failed: ${(e as Error).message}` },
+        { status: 500 },
+      );
+    }
+  }
+
   // 1) route intent
   let routed: RouterOut;
   try {
@@ -535,6 +592,63 @@ export async function POST(req: NextRequest) {
       text,
       needsConfirm: true,
     });
+  }
+
+  // link: Hermes-routed (rare — most link saves hit the fast-path above).
+  // Try to extract a URL from the original message and save it; if there's
+  // no URL we fall through to the unknown handler.
+  if (routed.intent === "link") {
+    const url = extractFirstUrl(text);
+    if (url) {
+      const leftover = text.replace(url, "").trim();
+      const note = leftover && leftover.length <= 500 ? leftover : null;
+      try {
+        const meta = await fetchLinkMeta(url);
+        const existing = db.prepare(
+          `SELECT id, added_at, url, kind, title, description, author, site_name,
+                  thumbnail_url, duration_seconds, status, note, opened_at
+           FROM saved_links WHERE url = ? AND archived_at IS NULL`,
+        ).get(url) as Record<string, unknown> | undefined;
+        let row: Record<string, unknown>;
+        let duplicate = false;
+        if (existing) {
+          row = existing;
+          duplicate = true;
+        } else {
+          const info = db.prepare(`
+            INSERT INTO saved_links (
+              added_at, url, kind, title, description, author, site_name,
+              thumbnail_url, duration_seconds, status, note, raw_meta_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'unread', ?, ?)
+          `).run(
+            Date.now(), meta.url, meta.kind, meta.title, meta.description, meta.author,
+            meta.site_name, meta.thumbnail_url, meta.duration_seconds, note, JSON.stringify(meta.raw),
+          );
+          row = db.prepare(
+            `SELECT id, added_at, url, kind, title, description, author, site_name,
+                    thumbnail_url, duration_seconds, status, note, opened_at
+             FROM saved_links WHERE id = ?`,
+          ).get(info.lastInsertRowid) as Record<string, unknown>;
+        }
+        const titleStr = (row.title as string | null) ?? (row.url as string);
+        const preview = duplicate ? `Already saved: ${titleStr}` : `Saved · ${titleStr}`;
+        return NextResponse.json({
+          kind: "link",
+          preview,
+          payload: row,
+          text,
+          needsConfirm: false,
+          duplicate,
+          routed,
+        });
+      } catch (e) {
+        return NextResponse.json(
+          { error: `link save failed: ${(e as Error).message}`, intent: routed.intent },
+          { status: 500 },
+        );
+      }
+    }
+    // fall through: no URL found, treat as unknown
   }
 
   // question: NL → safe read-only SQL → execute → return as an answer card.

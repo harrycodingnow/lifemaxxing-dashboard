@@ -52,6 +52,9 @@ export default function WeatherPanel() {
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  // Hour the user is currently hovering on the precip chart, or null. Drives
+  // both the highlighted bar color AND the floating tooltip badge.
+  const [hoverHour, setHoverHour] = useState<number | null>(null);
 
   // Restore saved place on mount.
   useEffect(() => {
@@ -213,21 +216,63 @@ export default function WeatherPanel() {
                       const barH = Math.max(0.5, (pop / 100) * 56);
                       const x = i * 10; // 24 bars * 10 = 240 (matches viewBox width)
                       const isNow = b.hour === nowHour;
+                      const isHover = hoverHour === b.hour;
                       return (
-                        <rect
-                          key={i}
-                          x={x + 0.5}
-                          y={56 - barH}
-                          width={9}
-                          height={barH}
-                          fill={isNow ? "#38bdf8" : pop >= 50 ? "#0ea5e9" : pop >= 20 ? "#0c7ea2" : "#1e3a5f"}
-                          opacity={pop === 0 ? 0.25 : 1}
-                        >
-                          <title>{`${String(b.hour).padStart(2, "0")}:00 — ${pop}% rain${b.temp != null ? `, ${b.temp}°` : ""}`}</title>
-                        </rect>
+                        <g key={i}>
+                          {/* The visible coloured bar (no pointer events; the
+                              wider hit target below handles hover). */}
+                          <rect
+                            x={x + 0.5}
+                            y={56 - barH}
+                            width={9}
+                            height={barH}
+                            fill={isHover ? "#7dd3fc" : isNow ? "#38bdf8" : pop >= 50 ? "#0ea5e9" : pop >= 20 ? "#0c7ea2" : "#1e3a5f"}
+                            opacity={pop === 0 && !isHover ? 0.25 : 1}
+                            pointerEvents="none"
+                          />
+                          {/* Full-height transparent hit target so even 0%
+                              bars are easy to hover over. */}
+                          <rect
+                            x={x}
+                            y={0}
+                            width={10}
+                            height={56}
+                            fill="transparent"
+                            onMouseEnter={() => setHoverHour(b.hour)}
+                            onMouseLeave={() => setHoverHour((h) => (h === b.hour ? null : h))}
+                            style={{ cursor: "crosshair" }}
+                          >
+                            <title>{`${String(b.hour).padStart(2, "0")}:00 — ${pop}% rain${b.temp != null ? `, ${b.temp}°` : ""}`}</title>
+                          </rect>
+                        </g>
                       );
                     })}
                   </svg>
+                  {/* Floating tooltip — pops instantly on bar hover, anchored
+                      horizontally to the hovered bar (24 bars → 100/24 ≈ 4.17%
+                      per bar; center the badge over bar n at (n + 0.5) * step). */}
+                  {hoverHour !== null && chart[hoverHour] && (() => {
+                    const b = chart[hoverHour];
+                    const pop = b.pop ?? 0;
+                    const leftPct = ((b.hour + 0.5) / 24) * 100;
+                    // Flip the anchor to the right side once we're past the
+                    // midpoint, so the tooltip doesn't overflow the widget.
+                    const isLeftHalf = leftPct < 50;
+                    return (
+                      <div
+                        className="pointer-events-none absolute -top-1 -translate-y-full rounded-md bg-zinc-900/95 border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-100 shadow-lg tabular-nums whitespace-nowrap z-10"
+                        style={{
+                          left: `${leftPct}%`,
+                          transform: `translate(${isLeftHalf ? "-25%" : "-75%"}, -100%)`,
+                        }}
+                      >
+                        <span className="text-zinc-400">{String(b.hour).padStart(2, "0")}:00</span>
+                        {" · "}
+                        <span className={pop >= 50 ? "text-sky-300 font-medium" : "text-zinc-200"}>{pop}%</span>
+                        {b.temp != null && <span className="text-zinc-500"> · {Math.round(b.temp)}°</span>}
+                      </div>
+                    );
+                  })()}
                 </div>
                 <div className="flex justify-between text-[9px] text-zinc-600 mt-0.5 px-0.5 tabular-nums">
                   <span>00</span><span>06</span><span>12</span><span>18</span><span>24</span>
