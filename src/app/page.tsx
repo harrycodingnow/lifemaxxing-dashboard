@@ -26,6 +26,12 @@ import WidgetCreator from "@/components/WidgetCreator";
 import WeeklyReview from "@/components/WeeklyReview";
 import { DashboardLayout, type WidgetSpec } from "@/components/DashboardLayout";
 import { isDemoMode, setDemoMode, installDemoFetch, DEMO_EVENT } from "@/lib/demo-data";
+import {
+  isLiquidGlassEnabled,
+  setLiquidGlassEnabled,
+  LIQUID_GLASS_CLASS,
+  LIQUID_GLASS_EVENT,
+} from "@/lib/liquid-glass";
 
 type Position = {
   asset_type: string;
@@ -228,6 +234,10 @@ export default function Home() {
   // synchronously on first render so the very first refreshAll already sees it.
   const [demoMode, setDemoModeState] = useState(false);
   if (typeof window !== "undefined") installDemoFetch();
+  // Liquid Glass theme: persisted opt-in iOS-26-ish frosted look. State is
+  // mirrored as a class on <html> so the global CSS overrides apply
+  // synchronously (no flash of plain theme on page refresh).
+  const [glass, setGlassState] = useState(false);
 
   type Stats = {
     cashflow: { buys_usd: number; sells_usd: number; net_usd: number; trade_count: number; fx_used: number };
@@ -314,6 +324,22 @@ export default function Home() {
     window.addEventListener(DEMO_EVENT, onChange);
     return () => window.removeEventListener(DEMO_EVENT, onChange);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Liquid Glass theme: same pattern — hydrate from localStorage and react
+  // to any in-page toggle. We also sync the class on <html> here so we cover
+  // the path where another tab flipped it.
+  useEffect(() => {
+    const on = isLiquidGlassEnabled();
+    setGlassState(on);
+    document.documentElement.classList.toggle(LIQUID_GLASS_CLASS, on);
+    const onChange = () => {
+      const v = isLiquidGlassEnabled();
+      setGlassState(v);
+      document.documentElement.classList.toggle(LIQUID_GLASS_CLASS, v);
+    };
+    window.addEventListener(LIQUID_GLASS_EVENT, onChange);
+    return () => window.removeEventListener(LIQUID_GLASS_EVENT, onChange);
   }, []);
   const [placeholderIdx, setPlaceholderIdx] = useState(0);
   const PLACEHOLDER_EXAMPLES = [
@@ -990,6 +1016,26 @@ export default function Home() {
           >
             {demoMode && <span className="inline-block h-1.5 w-1.5 rounded-full bg-fuchsia-400 animate-pulse" />}
             Demo
+          </button>
+          <button
+            onClick={() => setLiquidGlassEnabled(!glass)}
+            data-testid="liquid-glass-toggle"
+            title={
+              glass
+                ? "Liquid Glass ON — iOS-26-style frosted material. Click to switch back to the default dark theme."
+                : "Liquid Glass — re-skin the entire dashboard with an iOS-26-style frosted glass material."
+            }
+            aria-label={glass ? "Disable Liquid Glass theme" : "Enable Liquid Glass theme"}
+            aria-pressed={glass}
+            className={`ml-1 inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[12px] transition-colors ${
+              glass
+                ? "border-sky-400/60 bg-white/15 text-white backdrop-blur hover:bg-white/25"
+                : "border-zinc-700 text-zinc-400 hover:bg-zinc-800"
+            }`}
+          >
+            {glass && <span className="inline-block h-1.5 w-1.5 rounded-full bg-sky-300 animate-pulse" />}
+            <span aria-hidden>◎</span>
+            Glass
           </button>
         </div>
       </header>

@@ -27,6 +27,17 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
+      <head>
+        {/* No-flash Liquid Glass theme bootstrap. Runs before React paints so
+            the `liquid-glass` class is already on <html> when the override
+            stylesheet evaluates — no FOUC into the default dark theme. */}
+        <script
+          // eslint-disable-next-line react/no-danger
+          dangerouslySetInnerHTML={{
+            __html: `try{if(localStorage.getItem('lifemax.liquidGlass')==='1'){document.documentElement.classList.add('liquid-glass');}}catch(e){}`,
+          }}
+        />
+      </head>
       {/* suppressHydrationWarning on <body> silences benign warnings from
           browser extensions (Grammarly, password managers, dark-mode toggles)
           that mutate body attributes BEFORE React hydrates. Only attributes

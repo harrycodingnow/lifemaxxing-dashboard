@@ -57,3 +57,137 @@ body {
 .cd-sheen {
   background: conic-gradient(from 0deg, rgba(255,255,255,0) 0deg, rgba(255,255,255,0.10) 40deg, rgba(255,255,255,0) 90deg, rgba(255,255,255,0) 180deg, rgba(255,255,255,0.08) 220deg, rgba(255,255,255,0) 270deg);
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Liquid Glass theme — opt-in iOS-26-ish frosted material finish.
+   Enabled by adding the `liquid-glass` class to <html> (see lib/liquid-glass.ts).
+   All overrides are scoped under .liquid-glass so the default dark theme
+   stays untouched when the toggle is off.
+   ────────────────────────────────────────────────────────────────────────── */
+
+@keyframes liquid-glass-drift {
+  0%   { transform: translate3d(-3%, -2%, 0) scale(1.05); }
+  50%  { transform: translate3d(3%, 4%, 0)  scale(1.10); }
+  100% { transform: translate3d(-3%, -2%, 0) scale(1.05); }
+}
+
+/* Animated backdrop on <html> + a fixed blurred mesh layer over <body> for
+   the "wallpaper behind frosted glass" effect that defines the look. */
+html.liquid-glass {
+  background:
+    radial-gradient(120% 90% at 10% 0%,   rgba(255, 160, 220, 0.45) 0%, transparent 55%),
+    radial-gradient(110% 80% at 90% 20%,  rgba(120, 190, 255, 0.45) 0%, transparent 55%),
+    radial-gradient(100% 100% at 60% 100%,rgba(255, 200, 120, 0.45) 0%, transparent 55%),
+    radial-gradient(80% 80% at 0% 100%,   rgba(140, 255, 200, 0.40) 0%, transparent 60%),
+    linear-gradient(180deg, #08060c 0%, #050308 100%);
+}
+html.liquid-glass body {
+  position: relative;
+  background: transparent !important;
+}
+html.liquid-glass body::before {
+  content: "";
+  position: fixed;
+  inset: -10%;
+  z-index: 0;
+  pointer-events: none;
+  filter: blur(48px) saturate(120%);
+  opacity: 0.85;
+  animation: liquid-glass-drift 24s ease-in-out infinite;
+  background:
+    radial-gradient(40% 30% at 18% 22%, rgba(244, 114, 182, 0.55) 0%, transparent 70%),
+    radial-gradient(45% 35% at 82% 18%, rgba(96, 165, 250, 0.55) 0%, transparent 70%),
+    radial-gradient(50% 40% at 60% 88%, rgba(251, 191, 36, 0.48) 0%, transparent 70%),
+    radial-gradient(35% 30% at 8% 90%,  rgba(52, 211, 153, 0.45) 0%, transparent 70%);
+}
+/* Lift the actual app above the wallpaper layer. */
+html.liquid-glass body > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Root container: become transparent so the wallpaper shows through, and
+   tint the global text a hair brighter so it reads on the busier backdrop. */
+html.liquid-glass .h-screen.w-screen {
+  background: transparent !important;
+  color: #f4f4f5 !important;
+}
+
+/* Top bar / header / footer bands → frosted band. We can't use Tailwind's
+   `bg-zinc-*` class names as selectors (Tailwind v4 compiles them), so we
+   target structural roles (`header`, `aside`) and a few common wrappers. */
+html.liquid-glass header,
+html.liquid-glass aside {
+  background: rgba(20, 18, 28, 0.32) !important;
+  border-color: rgba(255, 255, 255, 0.10) !important;
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+}
+
+/* Every grid widget tile: frosted card. The grid items are rendered as
+   `div.flex.flex-col.…rounded-xl.border.border-zinc-800.bg-zinc-900/40`
+   by DashboardLayout — we re-skin via the rounded-xl + border combo. */
+html.liquid-glass .react-grid-item > div.rounded-xl,
+html.liquid-glass div.rounded-xl.border {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: rgba(255, 255, 255, 0.16) !important;
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.20),
+    0 6px 20px rgba(0, 0, 0, 0.30);
+}
+
+/* The chat input pill, answer card, etc. — anything rounded-full / rounded-lg
+   with a zinc-900-ish backdrop. We pick on the rounded-full class because the
+   chat row is the highest-visibility surface. */
+html.liquid-glass div.rounded-full.border,
+html.liquid-glass div.rounded-xl.bg-zinc-900\/85,
+html.liquid-glass div.rounded-xl.bg-zinc-950 {
+  background: rgba(255, 255, 255, 0.10) !important;
+  border-color: rgba(255, 255, 255, 0.22) !important;
+  backdrop-filter: blur(24px) saturate(170%);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+}
+
+/* Buttons: small glassy chips. */
+html.liquid-glass button.rounded-md.border,
+html.liquid-glass button.rounded-full {
+  border-color: rgba(255, 255, 255, 0.18) !important;
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+}
+
+/* Tables, code blocks inside the answer card etc. — keep them legible by
+   making the inner shell slightly less translucent than the outer card. */
+html.liquid-glass pre,
+html.liquid-glass table,
+html.liquid-glass thead {
+  background: rgba(0, 0, 0, 0.32) !important;
+}
+
+/* The grid container should let the wallpaper bleed through. */
+html.liquid-glass .react-grid-layout {
+  background: transparent !important;
+}
+
+/* Drag placeholder + resize handles, recoloured for the glass look. */
+html.liquid-glass .react-grid-item.react-grid-placeholder {
+  background: rgba(255, 255, 255, 0.18) !important;
+  border: 1px dashed rgba(255, 255, 255, 0.55) !important;
+}
+
+/* Inputs: translucent fields so the wallpaper hints through, without
+   sacrificing readability. */
+html.liquid-glass input,
+html.liquid-glass textarea {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
+}
+
+/* Subtle text-shadow on big headings makes white-on-bright-wallpaper readable. */
+html.liquid-glass h1,
+html.liquid-glass h2 {
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+}
