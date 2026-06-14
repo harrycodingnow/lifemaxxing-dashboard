@@ -217,19 +217,56 @@ export default function WeatherPanel() {
                       const x = i * 10; // 24 bars * 10 = 240 (matches viewBox width)
                       const isNow = b.hour === nowHour;
                       const isHover = hoverHour === b.hour;
+                      // "Now" bar uses warm amber against the cool-blue rain
+                      // bars so it reads as a distinct scrubber, not just a
+                      // slightly-lighter blue. Hover wins over now so the
+                      // tooltip target you're pointing at always highlights.
+                      const fill = isHover
+                        ? "#7dd3fc"
+                        : isNow
+                          ? "#fbbf24" // amber-400
+                          : pop >= 50
+                            ? "#0ea5e9"
+                            : pop >= 20
+                              ? "#0c7ea2"
+                              : "#1e3a5f";
                       return (
                         <g key={i}>
+                          {isNow && (
+                            // Faint amber column behind the now bar — makes
+                            // the highlight visible even when precip is 0%.
+                            <rect
+                              x={x}
+                              y={0}
+                              width={10}
+                              height={56}
+                              fill="#fbbf24"
+                              opacity={0.10}
+                              pointerEvents="none"
+                            />
+                          )}
                           {/* The visible coloured bar (no pointer events; the
                               wider hit target below handles hover). */}
                           <rect
                             x={x + 0.5}
-                            y={56 - barH}
+                            y={isNow ? Math.min(56 - barH, 52) : 56 - barH}
                             width={9}
-                            height={barH}
-                            fill={isHover ? "#7dd3fc" : isNow ? "#38bdf8" : pop >= 50 ? "#0ea5e9" : pop >= 20 ? "#0c7ea2" : "#1e3a5f"}
-                            opacity={pop === 0 && !isHover ? 0.25 : 1}
+                            height={isNow ? Math.max(barH, 4) : barH}
+                            fill={fill}
+                            opacity={pop === 0 && !isHover && !isNow ? 0.25 : 1}
                             pointerEvents="none"
                           />
+                          {isNow && (
+                            // Tiny amber pip on top of the now bar so it's
+                            // recognizable as a marker even at low precip.
+                            <circle
+                              cx={x + 5}
+                              cy={Math.max(2, (isNow ? Math.min(56 - barH, 52) : 56 - barH) - 1.5)}
+                              r={1.4}
+                              fill="#fbbf24"
+                              pointerEvents="none"
+                            />
+                          )}
                           {/* Full-height transparent hit target so even 0%
                               bars are easy to hover over. */}
                           <rect
@@ -242,7 +279,7 @@ export default function WeatherPanel() {
                             onMouseLeave={() => setHoverHour((h) => (h === b.hour ? null : h))}
                             style={{ cursor: "crosshair" }}
                           >
-                            <title>{`${String(b.hour).padStart(2, "0")}:00 — ${pop}% rain${b.temp != null ? `, ${b.temp}°` : ""}`}</title>
+                            <title>{`${String(b.hour).padStart(2, "0")}:00${isNow ? " (now)" : ""} — ${pop}% rain${b.temp != null ? `, ${b.temp}°` : ""}`}</title>
                           </rect>
                         </g>
                       );
