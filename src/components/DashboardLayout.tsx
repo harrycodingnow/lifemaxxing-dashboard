@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
   ResponsiveGridLayout,
   useContainerWidth,
@@ -448,8 +449,7 @@ export function DashboardLayout({ specs }: { specs: WidgetSpec[] }) {
   return (
     <>
       {navSlot &&
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (require("react-dom") as any).createPortal(
+        createPortal(
           <SidebarTrigger count={hiddenCount} onClick={() => setSidebarOpen(true)} />,
           navSlot,
         )}
