@@ -63,17 +63,6 @@ export const MESSAGES = {
   "nav.demo.enable": { en: "Enable demo mode", zh: "開啟演示模式" },
   "nav.demo.disable": { en: "Disable demo mode", zh: "關閉演示模式" },
   "nav.demo.label": { en: "Demo", zh: "演示" },
-  "nav.glass.on": {
-    en: "Liquid Glass ON — iOS-26-style frosted material. Click to switch back to the default dark theme.",
-    zh: "玻璃主題已開啟 — iOS 26 風格毛玻璃材質。點擊切回預設深色主題。",
-  },
-  "nav.glass.off": {
-    en: "Liquid Glass — re-skin the entire dashboard with an iOS-26-style frosted glass material.",
-    zh: "玻璃主題 — 用 iOS 26 風格毛玻璃材質重新繪製整個儀表板。",
-  },
-  "nav.glass.enable": { en: "Enable Liquid Glass theme", zh: "開啟玻璃主題" },
-  "nav.glass.disable": { en: "Disable Liquid Glass theme", zh: "關閉玻璃主題" },
-  "nav.glass.label": { en: "Glass", zh: "玻璃" },
   "nav.lang.toggle": { en: "Switch to 中文", zh: "Switch to English" },
   "nav.lang.label.en": { en: "EN", zh: "EN" },
   "nav.lang.label.zh": { en: "中", zh: "中" },

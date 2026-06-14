@@ -28,13 +28,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <head>
-        {/* No-flash Liquid Glass theme bootstrap. Runs before React paints so
-            the `liquid-glass` class is already on <html> when the override
-            stylesheet evaluates — no FOUC into the default dark theme. */}
+        {/* No-flash language bootstrap. Runs before React paints so the
+            <html lang> attribute matches the user's saved preference and
+            spell-checkers / screen-readers pick up the right language. */}
         <script
           // eslint-disable-next-line react/no-danger
           dangerouslySetInnerHTML={{
-            __html: `try{if(localStorage.getItem('lifemax.liquidGlass')==='1'){document.documentElement.classList.add('liquid-glass');}var L=localStorage.getItem('lifemax.lang');if(L==='zh'||L==='en'){document.documentElement.setAttribute('lang',L==='zh'?'zh-Hant':'en');}}catch(e){}`,
+            __html: `try{var L=localStorage.getItem('lifemax.lang');if(L==='zh'||L==='en'){document.documentElement.setAttribute('lang',L==='zh'?'zh-Hant':'en');}}catch(e){}`,
           }}
         />
       </head>

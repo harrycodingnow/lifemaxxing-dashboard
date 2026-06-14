@@ -27,12 +27,6 @@ import WeeklyReview from "@/components/WeeklyReview";
 import ReadLaterPanel from "@/components/ReadLaterPanel";
 import { DashboardLayout, type WidgetSpec } from "@/components/DashboardLayout";
 import { isDemoMode, setDemoMode, installDemoFetch, DEMO_EVENT } from "@/lib/demo-data";
-import {
-  isLiquidGlassEnabled,
-  setLiquidGlassEnabled,
-  LIQUID_GLASS_CLASS,
-  LIQUID_GLASS_EVENT,
-} from "@/lib/liquid-glass";
 import { useT, setLang } from "@/lib/i18n";
 
 type Position = {
@@ -237,10 +231,6 @@ export default function Home() {
   // synchronously on first render so the very first refreshAll already sees it.
   const [demoMode, setDemoModeState] = useState(false);
   if (typeof window !== "undefined") installDemoFetch();
-  // Liquid Glass theme: persisted opt-in iOS-26-ish frosted look. State is
-  // mirrored as a class on <html> so the global CSS overrides apply
-  // synchronously (no flash of plain theme on page refresh).
-  const [glass, setGlassState] = useState(false);
 
   type Stats = {
     cashflow: { buys_usd: number; sells_usd: number; net_usd: number; trade_count: number; fx_used: number };
@@ -277,6 +267,13 @@ export default function Home() {
   const [newsSummary, setNewsSummary] = useState<string | null>(null);
   const [newsSummaryLoading, setNewsSummaryLoading] = useState(false);
   const [newsSummaryOpen, setNewsSummaryOpen] = useState(false);
+  // Auto-summarize headlines when they arrive / when the category changes.
+  // Default ON — user can toggle off via the "auto" pill next to Summarize.
+  // Persisted to localStorage so the choice survives reloads.
+  const [newsSummaryAuto, setNewsSummaryAuto] = useState(true);
+  // Per-category cache so flipping tabs back doesn't re-spend a Hermes call.
+  // Map shape: { [category]: summary string }. Cleared on hard refresh.
+  const [newsSummaryCache, setNewsSummaryCache] = useState<Record<string, string>>({});
   type CalEventLite = { calendar: string; title: string; start_ts: number | null; all_day: boolean; multi_day: boolean };
   const [nextEvent, setNextEvent] = useState<CalEventLite | null>(null);
   type WeatherLite = { location: string; current: { temp: number; emoji: string; label: string } } | null;
@@ -329,21 +326,6 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Liquid Glass theme: same pattern — hydrate from localStorage and react
-  // to any in-page toggle. We also sync the class on <html> here so we cover
-  // the path where another tab flipped it.
-  useEffect(() => {
-    const on = isLiquidGlassEnabled();
-    setGlassState(on);
-    document.documentElement.classList.toggle(LIQUID_GLASS_CLASS, on);
-    const onChange = () => {
-      const v = isLiquidGlassEnabled();
-      setGlassState(v);
-      document.documentElement.classList.toggle(LIQUID_GLASS_CLASS, v);
-    };
-    window.addEventListener(LIQUID_GLASS_EVENT, onChange);
-    return () => window.removeEventListener(LIQUID_GLASS_EVENT, onChange);
-  }, []);
   const [placeholderIdx, setPlaceholderIdx] = useState(0);
   const PLACEHOLDER_EXAMPLES = [
     t("chat.placeholder.default"),
@@ -394,6 +376,8 @@ export default function Home() {
 
   // Fetch an AI news briefing (shells to Hermes server-side). Respects the
   // active category filter so "Summarize" on the Taiwan tab summarizes Taiwan.
+  // Writes the result into newsSummaryCache so flipping back to the same
+  // category is instant.
   const fetchNewsSummary = useCallback(async (category: string) => {
     setNewsSummaryLoading(true);
     setNewsSummaryOpen(true);
@@ -402,15 +386,61 @@ export default function Home() {
       const q = category && category !== "All" ? `?category=${encodeURIComponent(category.toLowerCase())}` : "";
       const r = await fetch(`/api/headlines/summary${q}`);
       const j = await r.json();
-      setNewsSummary(j?.summary || (j?.error ? `Couldn't summarize: ${j.error}` : "No summary available."));
+      const text = j?.summary || (j?.error ? `Couldn't summarize: ${j.error}` : "No summary available.");
+      setNewsSummary(text);
+      if (j?.summary) setNewsSummaryCache((cur) => ({ ...cur, [category]: text }));
     } catch (e) {
       setNewsSummary(`Couldn't summarize: ${String(e)}`);
     } finally {
       setNewsSummaryLoading(false);
     }
   }, []);
-  // Clear a stale summary when the category filter changes.
-  useEffect(() => { setNewsSummary(null); setNewsSummaryOpen(false); }, [newsCategory]);
+
+  // When the category changes, restore from cache if we have one — otherwise
+  // either auto-fetch (if auto is on AND headlines are present) or just clear
+  // the panel so the user gets a clean slate. Replaces the previous behavior
+  // of always nuking the open state on every category flip.
+  useEffect(() => {
+    const cached = newsSummaryCache[newsCategory];
+    if (cached) {
+      setNewsSummary(cached);
+      setNewsSummaryOpen(true);
+      return;
+    }
+    setNewsSummary(null);
+    if (newsSummaryAuto && headlines.length > 0) {
+      void fetchNewsSummary(newsCategory);
+    } else {
+      setNewsSummaryOpen(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newsCategory]);
+
+  // First time headlines arrive (or when auto gets toggled on while we're sitting
+  // on an empty panel), kick off the initial summary for the current category.
+  useEffect(() => {
+    if (!newsSummaryAuto) return;
+    if (headlines.length === 0) return;
+    if (newsSummary || newsSummaryLoading) return;
+    if (newsSummaryCache[newsCategory]) {
+      setNewsSummary(newsSummaryCache[newsCategory]);
+      setNewsSummaryOpen(true);
+      return;
+    }
+    void fetchNewsSummary(newsCategory);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [headlines.length, newsSummaryAuto]);
+
+  // Persist the auto toggle.
+  useEffect(() => {
+    try {
+      const v = window.localStorage.getItem("lifemax.newsSummary.auto");
+      if (v === "0") setNewsSummaryAuto(false);
+    } catch { /* ignore */ }
+  }, []);
+  useEffect(() => {
+    try { window.localStorage.setItem("lifemax.newsSummary.auto", newsSummaryAuto ? "1" : "0"); } catch { /* ignore */ }
+  }, [newsSummaryAuto]);
 
   useEffect(() => {
     refreshAll();
@@ -1021,22 +1051,6 @@ export default function Home() {
             {t("nav.demo.label")}
           </button>
           <button
-            onClick={() => setLiquidGlassEnabled(!glass)}
-            data-testid="liquid-glass-toggle"
-            title={glass ? t("nav.glass.on") : t("nav.glass.off")}
-            aria-label={glass ? t("nav.glass.disable") : t("nav.glass.enable")}
-            aria-pressed={glass}
-            className={`ml-1 inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[12px] transition-colors ${
-              glass
-                ? "border-sky-400/60 bg-white/15 text-white backdrop-blur hover:bg-white/25"
-                : "border-zinc-700 text-zinc-400 hover:bg-zinc-800"
-            }`}
-          >
-            {glass && <span className="inline-block h-1.5 w-1.5 rounded-full bg-sky-300 animate-pulse" />}
-            <span aria-hidden>◎</span>
-            {t("nav.glass.label")}
-          </button>
-          <button
             onClick={() => setLang(lang === "zh" ? "en" : "zh")}
             data-testid="lang-toggle"
             title={t("nav.lang.toggle")}
@@ -1485,9 +1499,21 @@ export default function Home() {
                   </button>
                 ))}
                 <button
+                  onClick={() => setNewsSummaryAuto((v) => !v)}
+                  className={`ml-auto text-[9px] uppercase tracking-wider rounded-full px-1.5 py-0.5 border transition-colors ${
+                    newsSummaryAuto
+                      ? "border-violet-700/60 bg-violet-950/40 text-violet-300"
+                      : "border-zinc-800 text-zinc-500 hover:border-zinc-600"
+                  }`}
+                  title={newsSummaryAuto ? "Auto-summarize is ON — summary appears automatically when headlines load or you switch categories. Click to turn off." : "Auto-summarize is OFF. Click to enable."}
+                  aria-pressed={newsSummaryAuto}
+                >
+                  {newsSummaryAuto ? "auto ✓" : "auto"}
+                </button>
+                <button
                   onClick={() => fetchNewsSummary(newsCategory)}
                   disabled={newsSummaryLoading || shown.length === 0}
-                  className="ml-auto text-[10px] uppercase tracking-wider rounded-full px-2 py-0.5 border border-violet-700/60 bg-violet-950/30 text-violet-300 hover:bg-violet-900/40 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="text-[10px] uppercase tracking-wider rounded-full px-2 py-0.5 border border-violet-700/60 bg-violet-950/30 text-violet-300 hover:bg-violet-900/40 disabled:opacity-40 disabled:cursor-not-allowed"
                   title="AI briefing of the headlines below"
                 >
                   {newsSummaryLoading ? "✨ …" : "✨ Summarize"}
