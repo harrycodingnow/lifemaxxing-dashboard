@@ -93,6 +93,46 @@ export const MESSAGES = {
   "chat.pinned.undone": { en: "Undone.", zh: "已復原。" },
   "chat.pinned.savedAt": { en: "Saved at {{time}}", zh: "已於 {{time}} 儲存" },
 
+  // ── hand-gesture control (webcam)
+  "chat.gesture.title": { en: "Hand gesture control", zh: "手勢控制" },
+  "chat.gesture.enable": { en: "Enable hand gesture control", zh: "開啟手勢控制" },
+  "chat.gesture.disable": { en: "Disable hand gesture control", zh: "關閉手勢控制" },
+  "chat.gesture.on": {
+    en: "Gesture control ON — pinch 👌 to move a widget; hover 5s to resize",
+    zh: "手勢控制已開啟 — 捏合 👌 移動小工具;停留 5 秒調整大小",
+  },
+  "chat.gesture.off": {
+    en: "Control widgets with hand gestures via your webcam",
+    zh: "透過網路攝影機用手勢控制小工具",
+  },
+  "chat.gesture.loading": { en: "Starting camera…", zh: "正在啟動攝影機…" },
+  "chat.gesture.label": { en: "gesture", zh: "手勢" },
+  "chat.gesture.hint": {
+    en: "Pinch 👌 move · hover a widget 5s to resize",
+    zh: "捏合 👌 移動 · 停留小工具 5 秒調整大小",
+  },
+  "chat.gesture.dragging": {
+    en: "Dragging — release your pinch to drop",
+    zh: "拖曳中 — 鬆開捏合放下",
+  },
+  "chat.gesture.dwell": {
+    en: "Hold… releasing resize mode",
+    zh: "保持… 即將進入調整大小模式",
+  },
+  "chat.gesture.resizing": {
+    en: "Resizing — open/close your hand to size · hold still to set",
+    zh: "調整大小中 — 張開/握合手掌調整 · 靜止片刻完成",
+  },
+  "chat.gesture.error.camera": {
+    en: "Camera unavailable or permission denied",
+    zh: "無法存取攝影機或權限被拒",
+  },
+  "chat.gesture.error.model": {
+    en: "Couldn't load the hand-tracking model — check your connection",
+    zh: "無法載入手部追蹤模型 — 請檢查網路連線",
+  },
+  "chat.gesture.retry": { en: "Retry", zh: "重試" },
+
   // ── answer card
   "answer.q": { en: "Q", zh: "問" },
   "answer.showSql": { en: "show SQL", zh: "顯示 SQL" },

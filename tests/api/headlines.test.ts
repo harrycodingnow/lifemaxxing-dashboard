@@ -115,6 +115,44 @@ describe("headlines GET", () => {
     expect(j.headlines.every((h: any) => h.category === "Taiwan")).toBe(true);
   });
 
+  it("?category=tech,markets returns the union of those categories", async () => {
+    global.fetch = vi.fn(async (url: any) => {
+      const u = String(url);
+      // Stub out every feed with the expected category so each contributes to the union.
+      if (u.includes("dowjones") || u.includes("yahoo")) {
+        return new Response(`<rss><channel><item><title>Markets story</title><link>m1</link></item></channel></rss>`, { status: 200 });
+      }
+      if (u.includes("techcrunch") || u.includes("arstechnica") || u.includes("engadget") || u.includes("topic/TECHNOLOGY")) {
+        return new Response(`<rss><channel><item><title>Tech story</title><link>tc1</link></item></channel></rss>`, { status: 200 });
+      }
+      if (u.includes("topic/WORLD")) {
+        return new Response(`<rss><channel><item><title>World news - Reuters</title><link>g1</link><source url="https://reuters.com">Reuters</source></item></channel></rss>`, { status: 200 });
+      }
+      // Everything else: a non-Focus story so the filter has something to discard.
+      return new Response(`<rss><channel><item><title>Other</title><link>o1</link></item></channel></rss>`, { status: 200 });
+    }) as any;
+    vi.resetModules();
+    const mod = await import("@/app/api/headlines/route");
+    const res = await mod.GET(makeRequest("/api/headlines?category=tech,markets"));
+    const j = await res.json();
+    expect(j.headlines.length).toBeGreaterThan(0);
+    const cats = new Set(j.headlines.map((h: any) => h.category));
+    expect(cats.has("Tech")).toBe(true);
+    expect(cats.has("Markets")).toBe(true);
+    expect(cats.has("World")).toBe(false);
+    expect(cats.has("Taiwan")).toBe(false);
+  });
+
+  it("parseCategoryParam handles single, multi, blank, and whitespace inputs", async () => {
+    const { parseCategoryParam } = await import("@/app/api/headlines/route");
+    expect(parseCategoryParam(null)).toBeNull();
+    expect(parseCategoryParam("")).toBeNull();
+    expect(parseCategoryParam("   ")).toBeNull();
+    expect(parseCategoryParam("tech")).toEqual(new Set(["tech"]));
+    expect(parseCategoryParam("Tech, Markets ")).toEqual(new Set(["tech", "markets"]));
+    expect(parseCategoryParam(",,tech,,,markets,,")).toEqual(new Set(["tech", "markets"]));
+  });
+
   it("survives a feed failure (returns whatever succeeds)", async () => {
     global.fetch = vi.fn(async (url: any) => {
       if (String(url).includes("dowjones")) throw new Error("network");

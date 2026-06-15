@@ -327,7 +327,7 @@ function mockHeadlines() {
 }
 
 function mockNewsSummary(category: string | null) {
-  const cat = (category || "").toLowerCase();
+  const cat = (category || "").toLowerCase().trim();
   const all = `Markets and AI dominate today, with risk assets broadly higher and SpaceX's debut the marquee event.
 • [Markets] Stocks grind higher as a SpaceX IPO and renewed ETF inflows lift sentiment; crypto firms with Bitcoin reclaiming $94K.
 • [Tech] AI is the throughline — TSMC's 2nm progress, Apple's on-device LLM, and a fresh OpenAI agentic coding model keep chips and models in focus.
@@ -345,8 +345,16 @@ function mockNewsSummary(category: string | null) {
     tech: `AI is the clear throughline across today's tech headlines.
 • [Tech] Hardware: TSMC's 2nm yields reportedly run ahead of schedule.
 • [Tech] Models: Apple debuts an on-device LLM and OpenAI ships an agentic coding model.`,
+    "tech,markets": `Your focus mix — Tech + Markets — leans risk-on with AI doing the heavy lifting.
+• [Markets] SpaceX's debut and record ETF inflows lift equities; Bitcoin reclaims $94K, dragging the crypto complex higher.
+• [Tech] Hardware: TSMC's 2nm yields run ahead of schedule, easing supply concerns for the next AI build-out.
+• [Tech] Models: Apple ships an on-device LLM and OpenAI rolls out an agentic coding model — capability war keeps accelerating.`,
   };
-  return { summary: byCat[cat] || all, cached: false, category: category || null, count: 12 };
+  // Multi-category param (e.g. "tech,markets" or "markets,tech") — normalize.
+  const key = cat.includes(",")
+    ? cat.split(",").map((s) => s.trim()).filter(Boolean).sort().join(",")
+    : cat;
+  return { summary: byCat[key] || all, cached: false, category: category || null, count: 12 };
 }
 
 

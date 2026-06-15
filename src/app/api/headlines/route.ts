@@ -119,15 +119,27 @@ export async function fetchHeadlines(): Promise<Headline[]> {
   return data;
 }
 
+// Parse a ?category= value that may be a single name or a comma-separated list
+// (e.g. "tech,markets" — used by the dashboard's "Focus" chip). Returns the
+// normalized lowercase set, or null when no filter was supplied.
+export function parseCategoryParam(raw: string | null | undefined): Set<string> | null {
+  const v = (raw || "").trim();
+  if (!v) return null;
+  const parts = v.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (parts.length === 0) return null;
+  return new Set(parts);
+}
+
 export async function GET(req: NextRequest) {
   // Optional ?category= filter (case-insensitive). Default: a mix of all.
-  const wanted = (req?.nextUrl?.searchParams.get("category") || "").trim().toLowerCase();
+  // Comma-separated values are accepted: ?category=tech,markets.
+  const wanted = parseCategoryParam(req?.nextUrl?.searchParams.get("category"));
 
   const now = Date.now();
   const data = await fetchHeadlines();
 
   const headlines = wanted
-    ? data.filter((h) => h.category.toLowerCase() === wanted)
+    ? data.filter((h) => wanted.has(h.category.toLowerCase()))
     : data;
   // Distinct categories present (for a UI filter chip row).
   const categories = Array.from(new Set(data.map((h) => h.category)));
